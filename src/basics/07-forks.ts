@@ -37,8 +37,9 @@ async function main() {
   await source
     .pipe(transformer)
     .pipeTo(createTarget({
-      // Once we get a fork exception from the source,
-      // the write() function will exit and be restarted.
+      // When the source detects a fork it throws a
+      // ForkException out of the read() function.
+      // As a result write() is restarted.
       // For that reason it's critical that the we resume
       // from the last known block:
       //   ...
@@ -55,9 +56,11 @@ async function main() {
           console.log(`Recent blocks list length is ${recentBlocks.length} after processing the batch`)
         }
       },
-      // When the source detects a fork it'll exit from the write()
-      // function, run the fork() function with the blocks sampled
-      // from the new consensus and run the write() function again.
+      // When the source detects a fork it'll throw a ForkException
+      // from the read() function. The target will catch it and run
+      // the fork() function with the blocks sampled from
+      // the new consensus (passed with the exception), then
+      // run the write() function again.
       //
       // This might happen several times: we won't always find
       // the common ancestor among the new known consensus blocks
