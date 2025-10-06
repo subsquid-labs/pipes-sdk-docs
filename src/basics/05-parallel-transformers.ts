@@ -4,7 +4,7 @@ import {
   createEvmDecoder,
   commonAbis
 } from '@sqd-pipes/pipes/evm'
-import * as uniswapV3Pool from './abi/uniswapV3Pool'
+import * as uniswapV3Pool from '../abi/uniswapV3Pool'
 
 const atBlock = 20000099
 const oneBlockRange = { from: atBlock, to: atBlock }

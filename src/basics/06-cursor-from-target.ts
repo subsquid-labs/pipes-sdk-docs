@@ -29,7 +29,7 @@ async function firstRun() {
 }
 
 async function secondRun() {
-  console.log(`\n\nStarting from block 20_000_300...`)
+  console.log(`\n\nStarting from block following the block 20_000_300...`)
   await source
     .pipe(transformer)
     .pipeTo(createTarget({
