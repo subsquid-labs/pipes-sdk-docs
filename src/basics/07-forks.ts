@@ -13,7 +13,7 @@ async function main() {
     events: {
       transfer: commonAbis.erc20.events.Transfer
     },
-    range: { from: 23515071 }
+    range: { from: 23521065 }
   })
 
   // To handle forks we'll need to keep track of recently
@@ -55,7 +55,7 @@ async function main() {
           console.log(`Recent blocks list length is ${recentBlocks.length} after processing the batch`)
         }
       },
- 			// When the source detects a fork it'll exit from the write()
+      // When the source detects a fork it'll exit from the write()
       // function, run the fork() function with the blocks sampled
       // from the new consensus and run the write() function again.
       //
@@ -65,8 +65,8 @@ async function main() {
       fork: async (newConsensusBlocks) => {
         console.log(`Got a fork!`)
         console.log(`Here are the saved recent blocks:\n`, printBlockCursorArray(recentBlocks))
-        console.log(`Here are the updated consensus blocks sent by the portal:\n`, printBlockCursorArray(previousBlocks))
-        const rollbackIndex = findRollbackIndex(recentBlocks, previousBlocks)
+        console.log(`Here are the updated consensus blocks sent by the portal:\n`, printBlockCursorArray(newConsensusBlocks))
+        const rollbackIndex = findRollbackIndex(recentBlocks, newConsensusBlocks)
         if (rollbackIndex >= 0) {
           console.log(`Rolling back: removing blocks after ${printBlockCursor(recentBlocks[rollbackIndex])}`)
           recentBlocks.length = rollbackIndex + 1
@@ -74,8 +74,8 @@ async function main() {
           return recentBlocks[rollbackIndex]
         }
         else {
-					// If the fork is deeper than the log of recently
-          // processed blocks we're keeping, then we can't recover.
+          // We can't recover if the fork is deeper than
+          // our log of recently processed blocks.
           console.log(`Failed to process the fork - no common ancestor found in recent blocks`)
           recentBlocks.length = 0
           return null
@@ -87,34 +87,34 @@ async function main() {
 main().then(() => { console.log('\n\ndone') })
 
 function findRollbackIndex(chainA: BlockCursor[], chainB: BlockCursor[]): number {
-    let aIndex = 0
-    let bIndex = 0
-    let lastCommonIndex = -1
+  let aIndex = 0
+  let bIndex = 0
+  let lastCommonIndex = -1
 
-    while (aIndex < chainA.length && bIndex < chainB.length) {
-        const blockA = chainA[aIndex]
-        const blockB = chainB[bIndex]
+  while (aIndex < chainA.length && bIndex < chainB.length) {
+    const blockA = chainA[aIndex]
+    const blockB = chainB[bIndex]
 
-        if (blockA.number < blockB.number) {
-            aIndex++
-            continue
-        }
-
-        if (blockA.number > blockB.number) {
-            bIndex++
-            continue
-        }
-
-        if (blockA.number === blockB.number && blockA.hash !== blockB.hash) {
-            return lastCommonIndex
-        }
-
-        lastCommonIndex = aIndex
+    if (blockA.number < blockB.number) {
         aIndex++
-        bIndex++
+        continue
     }
 
-    return lastCommonIndex
+    if (blockA.number > blockB.number) {
+        bIndex++
+        continue
+    }
+
+    if (blockA.number === blockB.number && blockA.hash !== blockB.hash) {
+        return lastCommonIndex
+    }
+
+    lastCommonIndex = aIndex
+    aIndex++
+    bIndex++
+  }
+
+  return lastCommonIndex
 }
 
 function printBlockCursor(b: BlockCursor): string {
