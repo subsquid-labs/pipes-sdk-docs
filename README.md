@@ -39,7 +39,7 @@ npm i
    npx squid-evm-typegen src/abi abi/contract0abi.json ...
    ```
 
-5. [parallel-transformers](src/05-parallel-transformers.ts): now there are two transformers simultaneously adding data to the source output. A call
+5. [composite-transformer](src/05-composite-transformer.ts): now there are two transformers simultaneously adding data to the source output. A call
    ```ts
    source.extend({
      field0: transformer0,
