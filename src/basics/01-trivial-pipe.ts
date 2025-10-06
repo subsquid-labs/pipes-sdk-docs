@@ -48,6 +48,12 @@ async function main() {
   })
 
   await source.pipeTo(target)
+
+  // You can also iterate over the source directly
+  for await (let {data} of source) {
+    console.log(data)
+  }
+
 }
 
 if (!module.parent) { // only need this because of the query builder export
