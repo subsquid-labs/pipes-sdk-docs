@@ -1,0 +1,17 @@
+{
+  "name": "@abernatskiy/hybrid-pipes-examples",
+  "version": "0.0.0",
+  "license": "MIT",
+  "scripts": {
+    "build": "rm -rf dist/ && tsc"
+  },
+  "devDependencies": {
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.2"
+  },
+  "dependencies": {
+    "@sqd-pipes/pipes": "^0.0.1-alpha.20",
+    "@subsquid/evm-typegen": "^4.4.0"
+  },
+  "peerDependenciesMeta": {}
+}
