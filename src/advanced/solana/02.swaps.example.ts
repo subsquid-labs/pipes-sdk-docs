@@ -5,7 +5,7 @@ import * as orcaWhirlpool from './abi/orca_whirlpool/index.js'
 async function cli() {
   const stream = createSolanaPortalSource({
     portal: 'https://portal.sqd.dev/datasets/solana-mainnet',
-  }).extend({
+  }).pipeComposite({
     orcaWhirlpool: createSolanaInstructionDecoder({
       range: { from: 'latest' },
       programId: orcaWhirlpool.programId,
