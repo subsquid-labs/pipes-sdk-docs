@@ -90,9 +90,8 @@ docker compose up -d
 ## Advanced examples
 
 Advanced examples at [src/advanced](src/advanced) are sorted by virtual machine from which the data is sourced ([EVM](src/advanced/evm), [Solana](src/advanced/solana)) and cover a variety of topics:
- * profiling
- * indexing factory contracts
- * customizing the metrics
+ * [user side raw data caching](src/advanced/evm/08.portal-cache.example.ts)
+ * profiling (throughout the examples)
+ * [indexing factory contracts](src/advanced/evm/03.factory.example.ts)
+ * [customizing the metrics](src/advanced/evm/06.custom-metrics.example.ts)
  * the basics covered in previous section
-
-<!-- user-side caching -->
