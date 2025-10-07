@@ -55,7 +55,7 @@ docker compose up -d
 
 5. [composite-transformer](src/basics/05-composite-transformer.ts): now there are two transformers simultaneously adding data to the source output. A call
    ```ts
-   source.extend({
+   source.pipeComposite({
      field0: transformer0,
      field1: transformer1
    })
@@ -63,7 +63,6 @@ docker compose up -d
    makes data in the shape of
    ```ts
    {
-     ...data_as_it_arrived_from_the_source,
      field0: output_of_transformer0,
      field1: output_of_transformer1
    }
