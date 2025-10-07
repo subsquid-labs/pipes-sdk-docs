@@ -15,7 +15,7 @@ async function cli() {
   // from Base Mainnet using Portal API
   const stream = createEvmPortalSource({
     portal: 'https://portal.sqd.dev/datasets/base-mainnet',
-  }).extend({
+  }).pipeComposite({
     transfers: erc20Transfers({ range }),
     uniswapV3: uniswapV3Decoder({
       range,
