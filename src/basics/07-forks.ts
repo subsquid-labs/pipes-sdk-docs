@@ -46,7 +46,11 @@ async function main() {
           // (sufficient for all networks we know of).
           while (
             recentUnfinalizedBlocks.length > 1000 ||
-            ( ctx.head.finalized && recentUnfinalizedBlocks[0].number <= ctx.head.finalized.number )
+            (
+              ctx.head.finalized &&
+              recentUnfinalizedBlocks[0] &&
+              recentUnfinalizedBlocks[0].number <= ctx.head.finalized.number
+            )
           ) {
             recentUnfinalizedBlocks.shift()
           }
