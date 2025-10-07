@@ -1,13 +1,11 @@
 import { createTarget } from '@sqd-pipes/pipes'
 import { createEvmPortalSource, EvmQueryBuilder } from '@sqd-pipes/pipes/evm'
 
-// The query builder shapes the query that will go into the Portal API
+// The query builder shapes the query that gets sent to the Portal API.
 // All methods only add to the data request, none shrink it.
-// It's possible to start from scratch, but for now we'll use a query
-// builder with a simple query already added.
-// The query requests Transfer event logs from the USDC token contract.
-// We'll reuse this query builder in some subsequent examples.
-export const queryBuilderWithUsdcTransfers = new EvmQueryBuilder()
+// Here we'll use a query builder that requests Transfer event
+// logs from the USDC token contract.
+const queryBuilderWithUsdcTransfers = new EvmQueryBuilder()
   .addFields({
     block: {
       // These two fields are required.
@@ -53,9 +51,6 @@ async function main() {
   for await (let {data} of source) {
     console.log(data)
   }
-
 }
 
-if (!module.parent) { // only need this because of the query builder export
-  main().then(() => { console.log('done') })
-}
+void main()

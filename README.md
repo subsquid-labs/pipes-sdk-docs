@@ -7,8 +7,17 @@ Pipes SDK is a highly customizable blockchain indexing library made by [Subsquid
 ```bash
 git clone https://github.com/subsquid-labs/pipes-sdk-docs
 cd pipes-sdk-docs
+```
+Install the dependencies with
+```bash
 npm ci
 ```
+or
+```bash
+bun install --frozen-lockfile
+```
+if you're using Bun.
+
 The examples are at
  * `src/basics/*.ts`
  * `src/advanced/evm/*.ts`
@@ -17,7 +26,12 @@ You can run any of them with `ts-node`:
 ```bash
 npx ts-node <path_to_example>
 ```
-Clickhouse-related examples require that a local Clickhouse container is running. Start it with
+or with Bun:
+```bash
+bun <path_to_example>
+```
+
+Clickhouse-related examples require a local Clickhouse container. Start it with
 ```bash
 docker compose up -d
 ```

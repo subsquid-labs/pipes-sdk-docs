@@ -53,4 +53,4 @@ async function main() {
   await source.pipe(transformer).pipeTo(target)
 }
 
-main().then(() => { console.log('done') })
+void main()

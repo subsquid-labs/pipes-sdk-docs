@@ -42,4 +42,4 @@ async function main() {
     .pipeTo(target)
 }
 
-main().then(() => { console.log('done') })
+void main()
