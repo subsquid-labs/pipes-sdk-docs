@@ -7,7 +7,7 @@ Pipes SDK is a highly customizable blockchain indexing library made by [Subsquid
 ```bash
 git clone https://github.com/subsquid-labs/pipes-sdk-docs
 cd pipes-sdk-docs
-npm i
+npm ci
 ```
 The examples are at
  * `src/basics/*.ts`
