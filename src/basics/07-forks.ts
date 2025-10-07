@@ -18,7 +18,7 @@ async function main() {
 
   // To handle forks we'll need to keep track of recently
   // processed unfinalized blocks. Here we'll use an in-memory queue.
-  const recentUnfinalizedBlocks: BlockCursor[] = []
+  let recentUnfinalizedBlocks: BlockCursor[] = []
 
   await source
     .pipe(transformer)
@@ -44,16 +44,11 @@ async function main() {
           // If the source has supplied a cursor of the last known final block
           // we can use it to prune the queue. Also, capping the queue length at 1000
           // (sufficient for all networks we know of).
-          while (
-            recentUnfinalizedBlocks.length > 1000 ||
-            (
-              ctx.head.finalized &&
-              recentUnfinalizedBlocks[0] &&
-              recentUnfinalizedBlocks[0].number <= ctx.head.finalized.number
-            )
-          ) {
-            recentUnfinalizedBlocks.shift()
+          if (ctx.head.finalized) {
+            recentUnfinalizedBlocks = recentUnfinalizedBlocks.filter(b => b.number < ctx.head.finalized!.number)
           }
+          recentUnfinalizedBlocks = recentUnfinalizedBlocks.slice(recentUnfinalizedBlocks.length - 1000, recentUnfinalizedBlocks.length)
+
           console.log(`Recent blocks list length is ${recentUnfinalizedBlocks.length} after processing the batch`)
         }
       },
