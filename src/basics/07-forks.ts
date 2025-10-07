@@ -17,22 +17,8 @@ async function main() {
   })
 
   // To handle forks we'll need to keep track of recently
-  // processed blocks. Here we'll use an in-memory
-  // queue of fixed length.
-  const recentBlocks: BlockCursor[] = []
-  const pushRecentBlock = (b: BlockCursor) => {
-    recentBlocks.push(b)
-    // Max length of 10 is chosen to keep the output
-    // compact and also so that the indexer could fail
-    // as a cautionary tale. In practice at least 64
-    // blocks should be kept on Ethereum.
-    //
-    // See https://cdn.subsquid.io/create-squid/finality-confirmations.json
-    // for recommeded values for some other networks.
-    if (recentBlocks.length > 10) { // <- change this number in prod!
-      recentBlocks.shift()
-    }
-  }
+  // processed unfinalized blocks. Here we'll use an in-memory queue.
+  const recentUnfinalizedBlocks: BlockCursor[] = []
 
   await source
     .pipe(transformer)
@@ -43,17 +29,28 @@ async function main() {
       // For that reason it's critical that the we resume
       // from the last known block:
       //   ...
-      //   for await (const {data, ctx} of read(recentBlocks[recentBlocks.length-1])) {
+      //   for await (const {data, ctx} of read(recentUnfinalizedBlocks[recentUnfinalizedBlocks.length-1])) {
       //   ...
       write: async ({ctx: {logger, profiler}, read}) => {
-        for await (const {data, ctx} of read(recentBlocks[recentBlocks.length-1])) {
+        for await (const {data, ctx} of read(recentUnfinalizedBlocks[recentUnfinalizedBlocks.length-1])) {
           console.log(`Got ${data.transfer.length} transfers`)
           // Not all data streams contain information on recent blocks.
           // So instead of looking at the data we're using
           // ctx.state.rollbackChain: it contains cursor values for
           // all unfinalized blocks of the batch.
-          ctx.state.rollbackChain.forEach((bc) => { pushRecentBlock(bc) })
-          console.log(`Recent blocks list length is ${recentBlocks.length} after processing the batch`)
+          ctx.state.rollbackChain.forEach((bc) => {
+            recentUnfinalizedBlocks.push(bc)
+          })
+          // If the source has supplied a cursor of the last known final block
+          // we can use it to prune the queue. Also, capping the queue length at 1000
+          // (sufficient for all networks we know of).
+          while (
+            recentUnfinalizedBlocks.length > 1000 ||
+            ( ctx.head.finalized && recentUnfinalizedBlocks[0].number <= ctx.head.finalized.number )
+          ) {
+            recentUnfinalizedBlocks.shift()
+          }
+          console.log(`Recent blocks list length is ${recentUnfinalizedBlocks.length} after processing the batch`)
         }
       },
       // When the source detects a fork it'll throw a ForkException
@@ -67,20 +64,20 @@ async function main() {
       // immediately.
       fork: async (newConsensusBlocks) => {
         console.log(`Got a fork!`)
-        console.log(`Here are the saved recent blocks:\n`, printBlockCursorArray(recentBlocks))
+        console.log(`Here are the saved recent blocks:\n`, printBlockCursorArray(recentUnfinalizedBlocks))
         console.log(`Here are the updated consensus blocks sent by the portal:\n`, printBlockCursorArray(newConsensusBlocks))
-        const rollbackIndex = findRollbackIndex(recentBlocks, newConsensusBlocks)
+        const rollbackIndex = findRollbackIndex(recentUnfinalizedBlocks, newConsensusBlocks)
         if (rollbackIndex >= 0) {
-          console.log(`Rolling back: removing blocks after ${printBlockCursor(recentBlocks[rollbackIndex])}`)
-          recentBlocks.length = rollbackIndex + 1
-          console.log(`Updated recent blocks:\n`, printBlockCursorArray(recentBlocks))
-          return recentBlocks[rollbackIndex]
+          console.log(`Rolling back: removing blocks after ${printBlockCursor(recentUnfinalizedBlocks[rollbackIndex])}`)
+          recentUnfinalizedBlocks.length = rollbackIndex + 1
+          console.log(`Updated recent blocks:\n`, printBlockCursorArray(recentUnfinalizedBlocks))
+          return recentUnfinalizedBlocks[rollbackIndex]
         }
         else {
           // We can't recover if the fork is deeper than
           // our log of recently processed blocks.
           console.log(`Failed to process the fork - no common ancestor found in recent blocks`)
-          recentBlocks.length = 0
+          recentUnfinalizedBlocks.length = 0
           return null
         }
       }
