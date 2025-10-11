@@ -13,7 +13,7 @@ async function main() {
     events: {
       transfer: commonAbis.erc20.events.Transfer
     },
-    range: { from: 23521065 }
+    range: { from: 'latest' }
   })
 
   // To handle forks we'll need to keep track of recently
@@ -45,7 +45,7 @@ async function main() {
           // we can use it to prune the queue. Also, capping the queue length at 1000
           // (sufficient for all networks we know of).
           if (ctx.head.finalized) {
-            recentUnfinalizedBlocks = recentUnfinalizedBlocks.filter(b => b.number < ctx.head.finalized!.number)
+            recentUnfinalizedBlocks = recentUnfinalizedBlocks.filter(b => b.number >= ctx.head.finalized!.number)
           }
           recentUnfinalizedBlocks = recentUnfinalizedBlocks.slice(recentUnfinalizedBlocks.length - 1000, recentUnfinalizedBlocks.length)
 
