@@ -101,6 +101,11 @@ docker compose up -d
    docker compose up -d
    ```
 
+   Once the pipeline has populated the database you can check out its contents at [localhost:10123/play](http://localhost:10123/play?user=default&password=default), e.g. with
+   ```sql
+   SELECT * FROM usdc_transfers LIMIT 100;
+   ```
+
 ## Advanced examples
 
 Advanced examples at [src/advanced](src/advanced) are sorted by virtual machine from which the data is sourced ([EVM](src/advanced/evm), [Solana](src/advanced/solana)) and cover a variety of topics:
