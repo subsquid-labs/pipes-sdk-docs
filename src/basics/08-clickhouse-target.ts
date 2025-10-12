@@ -36,10 +36,8 @@ async function main() {
   })
   .pipe(
     createEvmDecoder({
-      // range: { from: 'latest' },
-      range: {from: 23521872},
-      //contracts: ['0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48'], // USDC
-      contracts: ['0x27702a26126e0b3702af63ee09ac4d1a084ef628'], // Aleph
+      range: { from: 'latest' },
+      contracts: [ '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48' ], // USDC
       events: {
         transfers: commonAbis.erc20.events.Transfer,
       },
