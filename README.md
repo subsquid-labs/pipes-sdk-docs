@@ -2,6 +2,8 @@
 
 Pipes SDK is a highly customizable blockchain indexing library made by [Subsquid](https://www.sqd.ai).
 
+**Requirements:** NodeJS 22.15 or newer, for Clickhouse examples also Docker
+
 ## Quickstart
 
 ```bash
