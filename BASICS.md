@@ -1,6 +1,4 @@
-# Pipes SDK examples
-
-Pipes SDK is a highly customizable blockchain indexing library made by [Subsquid](https://www.sqd.ai).
+This guide documents the basic examples located at [src/basics](src/basics). The examples form a sequence designed to teach the core concepts on which Pipes SDK is built.
 
 **Requirements:** NodeJS >=22.15 OR Bun >=1.2, for Clickhouse examples also Docker
 
@@ -39,7 +37,7 @@ Clickhouse-related examples require a local Clickhouse container. Start it with
 docker compose up -d
 ```
 
-## Basic examples
+## The examples
 
 1. [trivial-pipe](src/basics/01-trivial-pipe.ts): an elementary Portal data pipeline with a source that fetches USDC transfers on a single block (20M) + a target that just prints the incoming data.
 
