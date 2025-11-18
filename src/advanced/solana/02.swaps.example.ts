@@ -1,6 +1,6 @@
 import { createSolanaInstructionDecoder, createSolanaPortalSource } from '@sqd-pipes/pipes/solana'
 
-import * as orcaWhirlpool from './abi/orca_whirlpool/index.js'
+import * as orcaWhirlpool from './abi/orca_whirlpool'
 
 async function cli() {
   const stream = createSolanaPortalSource({
