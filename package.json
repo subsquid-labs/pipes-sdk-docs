@@ -1,22 +1,21 @@
 {
-  "name": "@abernatskiy/hybrid-pipes-examples",
+  "name": "pipes-sdk-docs",
   "version": "0.0.0",
   "license": "MIT",
   "scripts": {
     "build": "rm -rf dist/ && tsc"
   },
   "devDependencies": {
-    "@types/node": "^24.8.0",
+    "@subsquid/evm-typegen": "^4.5.1",
+    "@types/node": "^24.10.1",
     "ts-node": "^10.9.2",
-    "typescript": "^5.9.2"
+    "typescript": "^5.9.3"
   },
   "dependencies": {
-    "@clickhouse/client": "^1.12.1",
-    "@sqd-pipes/pipes": "^0.0.1-alpha.27",
+    "@clickhouse/client": "^1.14.0",
+    "@subsquid/pipes": "^0.1.0-beta.6",
     "@subsquid/borsh": "^0.3.0",
-    "@subsquid/evm-typegen": "^4.4.0",
-    "@subsquid/solana-stream": "^0.3.1",
-    "better-sqlite3": "^12.4.1"
+    "@subsquid/solana-stream": "^0.3.1"
   },
   "peerDependenciesMeta": {}
 }
