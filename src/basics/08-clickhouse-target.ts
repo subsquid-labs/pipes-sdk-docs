@@ -1,6 +1,6 @@
 import { createClient } from '@clickhouse/client'
-import { commonAbis, createEvmDecoder, createEvmPortalSource } from '@sqd-pipes/pipes/evm'
-import { createClickhouseTarget } from '@sqd-pipes/pipes/targets/clickhouse'
+import { commonAbis, evmDecoder, evmPortalSource } from '@subsquid/pipes/evm'
+import { clickhouseTarget } from '@subsquid/pipes/targets/clickhouse'
 
 /**
  * This example demonstrates how to use ClickHouse as a target for storing processed blockchain data.
@@ -31,11 +31,11 @@ async function main() {
     `
   })
 
-  await createEvmPortalSource({
+  await evmPortalSource({
     portal: 'https://portal.sqd.dev/datasets/ethereum-mainnet',
   })
   .pipe(
-    createEvmDecoder({
+    evmDecoder({
       range: { from: 'latest' },
       contracts: [ '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48' ], // USDC
       events: {
@@ -44,7 +44,7 @@ async function main() {
     }),
   )
   .pipeTo(
-    createClickhouseTarget({
+    clickhouseTarget({
       client,
       onRollback: async ({type, store, cursor}) => {
         try {
@@ -63,7 +63,7 @@ async function main() {
         store.insert({
           table: 'usdc_transfers',
           values: data.transfers.map(t => ({
-            block_number: t.blockNumber,
+            block_number: t.block.number,
             timestamp: t.timestamp.valueOf() / 1000,
             transaction_hash: t.rawEvent.transactionHash,
             log_index: t.rawEvent.logIndex,

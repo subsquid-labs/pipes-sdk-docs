@@ -1,14 +1,12 @@
-import { BlockCursor, createTarget } from '@sqd-pipes/pipes'
-import { createEvmPortalSource, createEvmDecoder} from '@sqd-pipes/pipes/evm'
-
-import { commonAbis } from '@sqd-pipes/pipes/evm'
+import { BlockCursor, createTarget } from '@subsquid/pipes'
+import { evmPortalSource, evmDecoder, commonAbis } from '@subsquid/pipes/evm'
 
 async function main() {
-  const source = createEvmPortalSource({
+  const source = evmPortalSource({
     portal: 'https://portal.sqd.dev/datasets/ethereum-mainnet'
   })
 
-  const transformer = createEvmDecoder({
+  const transformer = evmDecoder({
     contracts: ['0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48'], // USDC
     events: {
       transfer: commonAbis.erc20.events.Transfer
@@ -31,7 +29,7 @@ async function main() {
       //   ...
       //   for await (const {data, ctx} of read(recentUnfinalizedBlocks[recentUnfinalizedBlocks.length-1])) {
       //   ...
-      write: async ({ctx: {logger, profiler}, read}) => {
+      write: async ({logger, read}) => {
         for await (const {data, ctx} of read(recentUnfinalizedBlocks[recentUnfinalizedBlocks.length-1])) {
           console.log(`Got ${data.transfer.length} transfers`)
           // Not all data streams contain information on recent blocks.

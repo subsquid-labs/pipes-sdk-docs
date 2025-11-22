@@ -1,13 +1,13 @@
-import { createTarget } from '@sqd-pipes/pipes'
-import { createEvmPortalSource, createEvmDecoder } from '@sqd-pipes/pipes/evm'
+import { createTarget } from '@subsquid/pipes'
+import { evmPortalSource, evmDecoder } from '@subsquid/pipes/evm'
 
-import { commonAbis } from '@sqd-pipes/pipes/evm'
+import { commonAbis } from '@subsquid/pipes/evm'
 
-const source = createEvmPortalSource({
+const source = evmPortalSource({
   portal: 'https://portal.sqd.dev/datasets/ethereum-mainnet'
 })
 
-const transformer = createEvmDecoder({
+const transformer = evmDecoder({
   contracts: ['0x27702a26126e0b3702af63ee09ac4d1a084ef628'], // Aleph token
   events: {
     transfer: commonAbis.erc20.events.Transfer
@@ -20,7 +20,7 @@ async function firstRun() {
   await source
     .pipe(transformer)
     .pipeTo(createTarget({
-      write: async ({ctx: {logger, profiler}, read}) => {
+      write: async ({logger, read}) => {
         for await (const {data} of read()) {
           console.log('data:', data)
         }
@@ -33,7 +33,7 @@ async function secondRun() {
   await source
     .pipe(transformer)
     .pipeTo(createTarget({
-      write: async ({ctx: {logger, profiler}, read}) => {
+      write: async ({logger, read}) => {
         for await (const {data} of read({ number: 20_000_300 })) {
           console.log('data:', data)
         }

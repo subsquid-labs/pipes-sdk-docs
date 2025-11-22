@@ -1,14 +1,14 @@
-import { createTarget, createTransformer } from '@sqd-pipes/pipes'
+import { createTarget, createTransformer } from '@subsquid/pipes'
 import {
-  createEvmPortalSource,
+  evmPortalSource,
   type EvmPortalData,
   EvmQueryBuilder
-} from '@sqd-pipes/pipes/evm'
+} from '@subsquid/pipes/evm'
 
 async function main() {
   const blankQueryBuilder = new EvmQueryBuilder()
 
-  const source = createEvmPortalSource({
+  const source = evmPortalSource({
     portal: 'https://portal.sqd.dev/datasets/ethereum-mainnet',
     query: blankQueryBuilder,
   })
@@ -43,7 +43,7 @@ async function main() {
   })
 
   const target = createTarget({
-    write: async ({ctx: {logger, profiler}, read}) => {
+    write: async ({logger, read}) => {
       for await (const {data} of read()) {
         logger.info({data}, 'data')
       }
