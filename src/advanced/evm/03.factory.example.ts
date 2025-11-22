@@ -1,4 +1,4 @@
-import { createEvmDecoder, createEvmPortalSource, createFactory, sqliteFactoryDatabase } from '@sqd-pipes/pipes/evm'
+import { factory, evmDecoder, evmPortalSource, factorySqliteDatabase } from '@subsquid/pipes/evm'
 
 import { events as factoryAbi } from './abi/uniswap.v3/factory'
 import { events as swapsAbi } from './abi/uniswap.v3/swaps'
@@ -11,16 +11,16 @@ import { events as swapsAbi } from './abi/uniswap.v3/swaps'
  */
 
 async function cli() {
-  const stream = createEvmPortalSource({
+  const stream = evmPortalSource({
     portal: 'https://portal.sqd.dev/datasets/ethereum-mainnet',
   }).pipe(
-    createEvmDecoder({
+    evmDecoder({
       range: { from: '12,369,621' },
-      contracts: createFactory({
+      contracts: factory({
         address: '0x1f98431c8ad98523631ae4a59f267346ea31f984',
         event: factoryAbi.PoolCreated,
         parameter: 'pool',
-        database: await sqliteFactoryDatabase({ path: './uniswap3-eth-pools.sqlite' }),
+        database: factorySqliteDatabase({ path: './uniswap3-eth-pools.sqlite' }),
       }),
       events: {
         swaps: swapsAbi.Swap,

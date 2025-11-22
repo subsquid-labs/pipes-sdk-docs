@@ -1,5 +1,5 @@
-import { PortalRange, parsePortalRange } from '@sqd-pipes/pipes'
-import { createEvmDecoder, createFactory, FactoryPersistentAdapter } from '@sqd-pipes/pipes/evm'
+import { PortalRange } from '@subsquid/pipes'
+import { factory as createFactory, evmDecoder, FactoryPersistentAdapter } from '@subsquid/pipes/evm'
 
 import { events as factoryAbi } from '../abi/uniswap.v3/factory'
 import { events as swapsAbi } from '../abi/uniswap.v3/swaps'
@@ -26,12 +26,12 @@ export function uniswapV3Decoder({
   range: PortalRange
   factory: {
     address: string
-    database: FactoryPersistentAdapter<any>
+    database: Promise<FactoryPersistentAdapter<any>> | FactoryPersistentAdapter<any>
   }
 }) {
-  return createEvmDecoder({
+  return evmDecoder({
     profiler: { id: 'UniswapV3 decode' },
-    range: parsePortalRange(range),
+    range: range || { from: 'latest' },
     contracts: createFactory({
       address: factory.address,
       event: factoryAbi.PoolCreated,

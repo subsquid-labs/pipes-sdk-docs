@@ -1,6 +1,6 @@
 import { createClient } from '@clickhouse/client'
-import { commonAbis, createEvmDecoder, createEvmPortalSource } from '@sqd-pipes/pipes/evm'
-import { createClickhouseTarget } from '@sqd-pipes/pipes/targets/clickhouse'
+import { commonAbis, evmDecoder, evmPortalSource } from '@subsquid/pipes/evm'
+import { clickhouseTarget } from '@subsquid/pipes/targets/clickhouse'
 
 /**
  * This example demonstrates how to use ClickHouse as a target for storing processed blockchain data.
@@ -15,11 +15,11 @@ async function cli() {
     url: 'http://localhost:10123',
   })
 
-  await createEvmPortalSource({
+  await evmPortalSource({
     portal: 'https://portal.sqd.dev/datasets/base-mainnet',
   })
     .pipe(
-      createEvmDecoder({
+      evmDecoder({
         profiler: { id: 'ERC20 transfers' },
         range: { from: 'latest' },
         events: {
@@ -28,7 +28,7 @@ async function cli() {
       }),
     )
     .pipeTo(
-      createClickhouseTarget({
+      clickhouseTarget({
         client,
         onRollback: async () => {},
         onData: async ({ data, ctx }) => {

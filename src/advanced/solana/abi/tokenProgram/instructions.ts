@@ -1,6 +1,6 @@
 import { address, option, string, struct, u8, u64, unit } from '@subsquid/borsh'
-import { instruction } from '../abi.support.js'
-import { AuthorityType } from './types.js'
+import { instruction } from '../abi.support'
+import { AuthorityType } from './types'
 
 export interface InitializeMint {
   decimals: number

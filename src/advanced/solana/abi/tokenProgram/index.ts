@@ -1,4 +1,4 @@
-export * as instructions from './instructions.js'
-export * as types from './types.js'
+export * as instructions from './instructions'
+export * as types from './types'
 
 export const programId = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'

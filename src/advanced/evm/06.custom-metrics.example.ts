@@ -1,4 +1,4 @@
-import { commonAbis, createEvmDecoder, createEvmPortalSource } from '@sqd-pipes/pipes/evm'
+import { commonAbis, evmDecoder, evmPortalSource } from '@subsquid/pipes/evm'
 
 /**
  * This example demonstrates how to add custom Prometheus metrics to your data processing pipeline.
@@ -8,10 +8,10 @@ import { commonAbis, createEvmDecoder, createEvmPortalSource } from '@sqd-pipes/
  */
 
 async function cli() {
-  const stream = createEvmPortalSource({
+  const stream = evmPortalSource({
     portal: 'https://portal.sqd.dev/datasets/ethereum-mainnet',
   }).pipe(
-    createEvmDecoder({
+    evmDecoder({
       profiler: { id: 'ERC20 transfers' },
       range: { from: 'latest' },
       events: {

@@ -1,9 +1,9 @@
-import { createSolanaInstructionDecoder, createSolanaPortalSource } from '@sqd-pipes/pipes/solana'
+import { createSolanaInstructionDecoder, solanaPortalSource } from '@subsquid/pipes/solana'
 
 import * as orcaWhirlpool from './abi/orca_whirlpool'
 
 async function cli() {
-  const stream = createSolanaPortalSource({
+  const stream = solanaPortalSource({
     portal: 'https://portal.sqd.dev/datasets/solana-mainnet',
   }).pipeComposite({
     orcaWhirlpool: createSolanaInstructionDecoder({

@@ -1,2 +1,2 @@
-export * from './erc20-transfers.js'
-export * from './uniswap-v3.js'
+export * from './erc20-transfers'
+export * from './uniswap-v3'

@@ -1,6 +1,6 @@
 import { address, bool, i32, option, struct, u8, u16, u64, u128, unit } from '@subsquid/borsh'
-import { instruction } from '../abi.support.js'
-import { OpenPositionBumps, OpenPositionWithMetadataBumps, RemainingAccountsInfo, WhirlpoolBumps } from './types.js'
+import { instruction } from '../abi.support'
+import { OpenPositionBumps, OpenPositionWithMetadataBumps, RemainingAccountsInfo, WhirlpoolBumps } from './types'
 
 export interface InitializeConfig {
   feeAuthority: string
