@@ -115,7 +115,7 @@ function findRollbackIndex(chainA: BlockCursor[], chainB: BlockCursor[]): number
 }
 
 function printBlockCursor(b: BlockCursor): string {
-  return `{number: ${b.number}, hash: ${b.hash}`
+  return `{number: ${b.number}, hash: ${b.hash}}`
 }
 
 function printBlockCursorArray(bcs: BlockCursor[]): string {
