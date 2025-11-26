@@ -20,6 +20,8 @@ const SQLITE_DB_PATH = './sqd-balances.sqlite'
 interface BalanceRow {
   address: string
   block: number
+  transactionIndex: number
+  logIndex: number
   newBalance: string
 }
 
@@ -33,6 +35,11 @@ type DecodedTransferData = {
     block: {
       number: number
     }
+    rawEvent: {
+      transactionHash: string
+      logIndex: number
+      transactionIndex?: number
+    }
   }>
 }
 
@@ -41,7 +48,7 @@ function createBalanceTransformer() {
   let lastProcessedBlock: number | null = null
 
   return createTransformer<DecodedTransferData, BalanceRow[]>({
-    start: async ({ logger }) => {
+    start: async ({ logger, state }) => {
       // Initialize SQLite database
       if (existsSync(SQLITE_DB_PATH)) {
         logger.info('Existing SQLite database found, will resume from last processed block')
@@ -90,10 +97,6 @@ function createBalanceTransformer() {
       }
 
       const balanceRows: BalanceRow[] = []
-      const getBalance = db.prepare('SELECT balance FROM balances WHERE address = ?')
-      const updateBalance = db.prepare('INSERT INTO balances (address, balance) VALUES (?, ?) ON CONFLICT(address) DO UPDATE SET balance = ?')
-      const insertDelta = db.prepare('INSERT OR REPLACE INTO balance_deltas (address, block_number, delta) VALUES (?, ?, ?)')
-      const insertProcessedBlock = db.prepare('INSERT OR IGNORE INTO processed_blocks (block_number) VALUES (?)')
       
       // Process transfers in block order
       const transfers = data.transfers
@@ -111,62 +114,95 @@ function createBalanceTransformer() {
       // Process blocks in order
       const sortedBlocks = Array.from(transfersByBlock.keys()).sort((a, b) => a - b)
       
-      for (const blockNum of sortedBlocks) {
-        // Skip blocks we've already processed (for resume functionality)
-        if (lastProcessedBlock !== null && blockNum <= lastProcessedBlock) {
-          continue
-        }
-        
-        const blockTransfers = transfersByBlock.get(blockNum)!
-        
-        // Track addresses that changed in this block and aggregate deltas
-        const changedAddresses = new Set<string>()
-        const addressDeltas = new Map<string, bigint>()
-        
-        // First pass: calculate all deltas for this block
-        for (const transfer of blockTransfers) {
-          const from = transfer.event.from.toLowerCase()
-          const to = transfer.event.to.toLowerCase()
-          const value = transfer.event.value
-          
-          if (from !== '0x0000000000000000000000000000000000000000') {
-            const currentDelta = addressDeltas.get(from) || 0n
-            addressDeltas.set(from, currentDelta - value)
-            changedAddresses.add(from)
+      // Prepare all statements outside the transaction for better performance
+      const getBalance = db.prepare('SELECT balance FROM balances WHERE address = ?')
+      const updateBalance = db.prepare('INSERT INTO balances (address, balance) VALUES (?, ?) ON CONFLICT(address) DO UPDATE SET balance = ?')
+      const insertDelta = db.prepare('INSERT OR REPLACE INTO balance_deltas (address, block_number, delta) VALUES (?, ?, ?)')
+      const insertProcessedBlock = db.prepare('INSERT OR IGNORE INTO processed_blocks (block_number) VALUES (?)')
+      
+      // Wrap all SQLite operations in a single transaction
+      // This ensures atomicity: either all blocks in the batch are processed, or none are
+      const transaction = db.transaction(() => {
+        for (const blockNum of sortedBlocks) {
+          // Skip blocks we've already processed (for resume functionality)
+          if (lastProcessedBlock !== null && blockNum <= lastProcessedBlock) {
+            continue
           }
           
-          if (to !== '0x0000000000000000000000000000000000000000') {
-            const currentDelta = addressDeltas.get(to) || 0n
-            addressDeltas.set(to, currentDelta + value)
-            changedAddresses.add(to)
+          const blockTransfers = transfersByBlock.get(blockNum)!
+          
+          // Track addresses that changed in this block and aggregate deltas
+          // Also track the maximum transactionIndex and logIndex for each address
+          const changedAddresses = new Set<string>()
+          const addressDeltas = new Map<string, bigint>()
+          const addressTransactionIndex = new Map<string, number>()
+          const addressLogIndex = new Map<string, number>()
+          
+          // First pass: calculate all deltas for this block and track transaction indices and log indices
+          for (const transfer of blockTransfers) {
+            const from = transfer.event.from.toLowerCase()
+            const to = transfer.event.to.toLowerCase()
+            const value = transfer.event.value
+            // Use transactionIndex if available, otherwise use logIndex as fallback
+            const txIndex = transfer.rawEvent.transactionIndex ?? transfer.rawEvent.logIndex
+            const logIdx = transfer.rawEvent.logIndex
+            
+            if (from !== '0x0000000000000000000000000000000000000000') {
+              const currentDelta = addressDeltas.get(from) || 0n
+              addressDeltas.set(from, currentDelta - value)
+              changedAddresses.add(from)
+              // Track maximum transactionIndex and logIndex for this address
+              const currentMaxTx = addressTransactionIndex.get(from) ?? -1
+              addressTransactionIndex.set(from, Math.max(currentMaxTx, txIndex))
+              const currentMaxLog = addressLogIndex.get(from) ?? -1
+              addressLogIndex.set(from, Math.max(currentMaxLog, logIdx))
+            }
+            
+            if (to !== '0x0000000000000000000000000000000000000000') {
+              const currentDelta = addressDeltas.get(to) || 0n
+              addressDeltas.set(to, currentDelta + value)
+              changedAddresses.add(to)
+              // Track maximum transactionIndex and logIndex for this address
+              const currentMaxTx = addressTransactionIndex.get(to) ?? -1
+              addressTransactionIndex.set(to, Math.max(currentMaxTx, txIndex))
+              const currentMaxLog = addressLogIndex.get(to) ?? -1
+              addressLogIndex.set(to, Math.max(currentMaxLog, logIdx))
+            }
           }
-        }
-        
-        // Second pass: apply deltas and update balances
-        for (const [address, delta] of addressDeltas) {
-          const row = getBalance.get(address) as { balance: string } | undefined
-          const currentBalance = BigInt(row?.balance || '0')
-          const newBalance = currentBalance + delta
-          updateBalance.run(address, newBalance.toString(), newBalance.toString())
-          insertDelta.run(address, blockNum, delta.toString())
-        }
-        
-        // Record balance changes for this block
-        for (const address of changedAddresses) {
-          const row = getBalance.get(address) as { balance: string } | undefined
-          if (row) {
-            balanceRows.push({
-              address,
-              block: blockNum,
-              newBalance: row.balance
-            })
+          
+          // Second pass: apply deltas and update balances
+          for (const [address, delta] of addressDeltas) {
+            const row = getBalance.get(address) as { balance: string } | undefined
+            const currentBalance = BigInt(row?.balance || '0')
+            const newBalance = currentBalance + delta
+            updateBalance.run(address, newBalance.toString(), newBalance.toString())
+            insertDelta.run(address, blockNum, delta.toString())
           }
+          
+          // Record balance changes for this block with transactionIndex and logIndex
+          for (const address of changedAddresses) {
+            const row = getBalance.get(address) as { balance: string } | undefined
+            const txIndex = addressTransactionIndex.get(address) ?? 0
+            const logIdx = addressLogIndex.get(address) ?? 0
+            if (row) {
+              balanceRows.push({
+                address,
+                block: blockNum,
+                transactionIndex: txIndex,
+                logIndex: logIdx,
+                newBalance: row.balance
+              })
+            }
+          }
+          
+          // Mark block as processed
+          insertProcessedBlock.run(blockNum)
+          lastProcessedBlock = blockNum
         }
-        
-        // Mark block as processed
-        insertProcessedBlock.run(blockNum)
-        lastProcessedBlock = blockNum
-      }
+      })
+      
+      // Execute the transaction atomically
+      transaction()
       
       return balanceRows
     },
@@ -234,15 +270,18 @@ async function main() {
     url: 'http://localhost:10123',
   })
 
-  // Create ClickHouse table
+  // Create ClickHouse table with CollapsingMergeTree
   await client.command({ query: `
     CREATE TABLE IF NOT EXISTS sqd_balances (
-      address      LowCardinality(FixedString(42)),
-      block        UInt32 CODEC (DoubleDelta, ZSTD),
-      newBalance   String
+      address          LowCardinality(FixedString(42)),
+      block            UInt32 CODEC (DoubleDelta, ZSTD),
+      transactionIndex UInt32,
+      logIndex         UInt32,
+      newBalance       String,
+      sign             Int8 DEFAULT 1
     )
-    ENGINE = MergeTree()
-    ORDER BY (block, address);
+    ENGINE = CollapsingMergeTree(sign)
+    ORDER BY (block, transactionIndex, logIndex, address);
   `})
 
   await evmPortalSource({
@@ -263,11 +302,46 @@ async function main() {
         client,
         onRollback: async ({ type, store, safeCursor }) => {
           try {
-            // Remove rows from blocks after the rollback point
-            await store.removeAllRows({
-              tables: ['sqd_balances'],
-              where: `block > ${safeCursor.number}`,
+            // Query rows that need to be cancelled (blocks after rollback point)
+            const rowsToCancel = await client.query({
+              query: `
+                SELECT address, block, transactionIndex, logIndex, newBalance
+                FROM sqd_balances
+                WHERE block > ${safeCursor.number} AND sign = 1
+              `,
+              format: 'JSONEachRow',
             })
+            
+            type RowType = {
+              address: string
+              block: number
+              transactionIndex: number
+              logIndex: number
+              newBalance: string
+            }
+            
+            const result: any = await rowsToCancel.json()
+            // Flatten if nested, otherwise use as-is
+            const data: RowType[] = Array.isArray(result) 
+              ? (Array.isArray(result[0]) ? result.flat() : result)
+              : []
+
+            if (data.length > 0) {
+              // Insert rows with sign=-1 to cancel the deprecated records
+              await store.insert({
+                table: 'sqd_balances',
+                values: data.map((row: RowType) => ({
+                  address: row.address,
+                  block: row.block,
+                  transactionIndex: row.transactionIndex,
+                  logIndex: row.logIndex,
+                  newBalance: row.newBalance,
+                  sign: -1,
+                })),
+                format: 'JSONEachRow',
+              })
+              console.log(`ClickhouseTarget onRollback: Cancelled ${data.length} balance records with sign=-1`)
+            }
           } catch (err) {
             console.error('onRollback err:', err)
             throw err
@@ -282,7 +356,10 @@ async function main() {
             values: data.map(row => ({
               address: row.address,
               block: row.block,
+              transactionIndex: row.transactionIndex,
+              logIndex: row.logIndex,
               newBalance: row.newBalance,
+              sign: 1,
             })),
             format: 'JSONEachRow',
           })
