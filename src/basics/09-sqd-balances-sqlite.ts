@@ -246,7 +246,7 @@ async function main() {
   `})
 
   await evmPortalSource({
-    portal: 'https://portal.sqd.dev/datasets/arbitrum-mainnet',
+    portal: 'https://portal.sqd.dev/datasets/arbitrum-one',
   })
     .pipe(
       evmDecoder({
@@ -254,19 +254,19 @@ async function main() {
         events: {
           transfers: commonAbis.erc20.events.Transfer,
         },
-        range: { from: 'latest' },
+        range: { from: 194120655 },
       }),
     )
     .pipe(createBalanceTransformer())
     .pipeTo(
       clickhouseTarget({
         client,
-        onRollback: async ({ type, store, cursor }) => {
+        onRollback: async ({ type, store, safeCursor }) => {
           try {
             // Remove rows from blocks after the rollback point
             await store.removeAllRows({
               tables: ['sqd_balances'],
-              where: `block > ${cursor.number}`,
+              where: `block > ${safeCursor.number}`,
             })
           } catch (err) {
             console.error('onRollback err:', err)
