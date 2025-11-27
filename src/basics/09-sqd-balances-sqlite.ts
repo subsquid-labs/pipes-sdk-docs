@@ -6,12 +6,15 @@ import Database from 'better-sqlite3'
 import { existsSync } from 'fs'
 
 /**
- * This example demonstrates how to reconstruct token balances using SQLite for state management.
- * It tracks SQD token (0x1337420dED5ADb9980CFc35f8f2B054ea86f8aB1 on Arbitrum) transfers,
- * maintains balances in SQLite, and stores the results (address, block, newBalance) to ClickHouse.
+ * This example demonstrates how to reconstruct token balances using SQLite
+ * for storing the state of the transform. It tracks transfers of SQD
+ * (0x1337420dED5ADb9980CFc35f8f2B054ea86f8aB1 on Arbitrum),
+ * maintains balances in SQLite, and stores the results to ClickHouse
+ * (`sqd_balances` table).
  * 
  * The transformer is self-contained and uses SQLite to track intermediate balances,
- * not relying on ClickHouse for state management.
+ * not relying on ClickHouse for state management. State consistency is ensured with
+ * an assert.
  */
 
 const SQD_TOKEN_ADDRESS = '0x1337420dED5ADb9980CFc35f8f2B054ea86f8aB1'
@@ -107,7 +110,7 @@ function createBalanceTransformer() {
 
       const balanceRows: BalanceRow[] = []
       
-      // Processing transfers in block order
+      // We'll process transfers in block order
       const transfers = data.transfers
       const transfersByBlock = new Map<number, typeof transfers>()
       for (const transfer of transfers) {
@@ -117,12 +120,13 @@ function createBalanceTransformer() {
         }
         transfersByBlock.get(blockNum)!.push(transfer)
       }
+      // data.transfers is already sorted by block number, so this is just a convenience
       const sortedBlocks = Array.from(transfersByBlock.keys()).sort((a, b) => a - b)
 
-      // Getting the block that will become the last processed one from from ctx.state
+      // The block that will become the last processed one from from ctx.state
       const lastProcessedBlock = ctx.state.current?.number ?? null
       
-      // If we have data to process but no state, that's an error condition
+      // If we have data to process but no ctx.state.current, that's an error condition
       if (sortedBlocks.length > 0 && lastProcessedBlock === null) {
         throw new Error(
           `State error: Have data to process (blocks ${Math.min(...sortedBlocks)}-${Math.max(...sortedBlocks)}) ` +
