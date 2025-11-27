@@ -201,7 +201,7 @@ function createBalanceTransformer() {
       // All SQLite operations are wrapped in a single transaction for atomicity
       const transaction = db.transaction(() => {
         const allDeltasAfterFork = getAllDeltasAfterFork.all(cursor.number) as Array<{ address: string; delta: string }>
-      
+
         const updatedBalances = new Map<string, bigint>()
         for (const { address, delta } of allDeltasAfterFork) {
           let currentBalance = updatedBalances.get(address)
