@@ -279,51 +279,12 @@ async function main() {
           })
         },
         onRollback: async ({ type, store, safeCursor }) => {
-          try {
-            // Query rows that need to be cancelled (blocks after rollback point)
-            const rowsToCancel = await client.query({
-              query: `
-                SELECT address, block, transactionIndex, logIndex, newBalance
-                FROM sqd_balances
-                WHERE block > ${safeCursor.number} AND sign = 1
-              `,
-              format: 'JSONEachRow',
-            })
-            
-            type RowType = {
-              address: string
-              block: number
-              transactionIndex: number
-              logIndex: number
-              newBalance: string
-            }
-            
-            const result: any = await rowsToCancel.json()
-            // Flatten if nested, otherwise use as-is
-            const data: RowType[] = Array.isArray(result) 
-              ? (Array.isArray(result[0]) ? result.flat() : result)
-              : []
-
-            if (data.length > 0) {
-              // Insert rows with sign=-1 to cancel the deprecated records
-              await store.insert({
-                table: 'sqd_balances',
-                values: data.map((row: RowType) => ({
-                  address: row.address,
-                  block: row.block,
-                  transactionIndex: row.transactionIndex,
-                  logIndex: row.logIndex,
-                  newBalance: row.newBalance,
-                  sign: -1,
-                })),
-                format: 'JSONEachRow',
-              })
-              console.log(`ClickhouseTarget onRollback: Cancelled ${data.length} balance records with sign=-1`)
-            }
-          } catch (err) {
-            console.error('onRollback err:', err)
-            throw err
-          }
+          const result = await store.removeAllRows({
+            tables: ['sqd_balances'],
+            where: `block > {latest:UInt32}`,
+            params: { latest: safeCursor.number },
+          })
+          console.log(`Removed ${result[0]?.count ?? 0} rows from sqd_balances`)
         },
         onData: async ({ store, data, ctx }) => {
           if (data.length === 0) return
