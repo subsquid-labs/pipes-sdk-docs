@@ -45,7 +45,6 @@ type DecodedTransferData = {
 
 function createBalanceTransformer() {
   let db: Database.Database | null = null
-  let lastProcessedBlock: number | null = null
 
   return createTransformer<DecodedTransferData, BalanceRow[]>({
     start: async ({ logger, state }) => {
@@ -81,11 +80,21 @@ function createBalanceTransformer() {
         )
       `)
       
-      // Get last processed block
+      // Get last processed block from SQLite
       const lastBlock = db.prepare('SELECT MAX(block_number) as max_block FROM processed_blocks').get() as { max_block: number | null }
-      if (lastBlock.max_block !== null) {
-        lastProcessedBlock = lastBlock.max_block
-        logger.info({ lastProcessedBlock }, `BalanceTransformer: Resuming from last processed block ${lastProcessedBlock}`)
+      const sqliteLastBlock = lastBlock.max_block ?? null
+      
+      // Assert that the initial state matches what's in SQLite
+      const stateLastBlock = state.current?.number ?? null
+      if (sqliteLastBlock !== stateLastBlock) {
+        throw new Error(
+          `State mismatch: SQLite has last processed block ${sqliteLastBlock}, but transformer state indicates ${stateLastBlock}. ` +
+          `This indicates inconsistent state between SQLite and the pipeline state.`
+        )
+      }
+      
+      if (sqliteLastBlock !== null) {
+        logger.info({ lastProcessedBlock: sqliteLastBlock }, `BalanceTransformer: Resuming from last processed block ${sqliteLastBlock}`)
       }
       
       logger.info('Balance transformer initialized')
@@ -98,10 +107,8 @@ function createBalanceTransformer() {
 
       const balanceRows: BalanceRow[] = []
       
-      // Process transfers in block order
+      // Processing transfers in block order
       const transfers = data.transfers
-      
-      // Group transfers by block number to process them in order
       const transfersByBlock = new Map<number, typeof transfers>()
       for (const transfer of transfers) {
         const blockNum = transfer.block.number
@@ -110,25 +117,27 @@ function createBalanceTransformer() {
         }
         transfersByBlock.get(blockNum)!.push(transfer)
       }
-      
-      // Process blocks in order
       const sortedBlocks = Array.from(transfersByBlock.keys()).sort((a, b) => a - b)
+
+      // Getting the block that will become the last processed one from from ctx.state
+      const lastProcessedBlock = ctx.state.current?.number ?? null
       
-      // Prepare all statements outside the transaction for better performance
+      // If we have data to process but no state, that's an error condition
+      if (sortedBlocks.length > 0 && lastProcessedBlock === null) {
+        throw new Error(
+          `State error: Have data to process (blocks ${Math.min(...sortedBlocks)}-${Math.max(...sortedBlocks)}) ` +
+          `but ctx.state.current is null. This indicates a state management issue.`
+        )
+      }
+ 
       const getBalance = db.prepare('SELECT balance FROM balances WHERE address = ?')
       const updateBalance = db.prepare('INSERT INTO balances (address, balance) VALUES (?, ?) ON CONFLICT(address) DO UPDATE SET balance = ?')
       const insertDelta = db.prepare('INSERT OR REPLACE INTO balance_deltas (address, block_number, delta) VALUES (?, ?, ?)')
       const insertProcessedBlock = db.prepare('INSERT OR IGNORE INTO processed_blocks (block_number) VALUES (?)')
-      
-      // Wrap all SQLite operations in a single transaction
-      // This ensures atomicity: either all blocks in the batch are processed, or none are
+       
+      // All SQLite operations are wrapped in a single transaction for atomicity
       const transaction = db.transaction(() => {
         for (const blockNum of sortedBlocks) {
-          // Skip blocks we've already processed (for resume functionality)
-          if (lastProcessedBlock !== null && blockNum <= lastProcessedBlock) {
-            continue
-          }
-          
           const blockTransfers = transfersByBlock.get(blockNum)!
           
           // Track addresses that changed in this block and aggregate deltas
@@ -194,10 +203,12 @@ function createBalanceTransformer() {
               })
             }
           }
-          
-          // Mark block as processed
-          insertProcessedBlock.run(blockNum)
-          lastProcessedBlock = blockNum
+        }
+        
+        // Mark the last processed block from the batch
+        // This ensures we track the actual last block processed, not just blocks that had transfers
+        if (lastProcessedBlock !== null) {
+          insertProcessedBlock.run(lastProcessedBlock)
         }
       })
       
@@ -246,9 +257,6 @@ function createBalanceTransformer() {
       // Delete deltas and processed blocks after the fork point
       db.prepare('DELETE FROM balance_deltas WHERE block_number > ?').run(cursor.number)
       db.prepare('DELETE FROM processed_blocks WHERE block_number > ?').run(cursor.number)
-      
-      // Reset last processed block to before the fork
-      lastProcessedBlock = cursor.number > 0 ? cursor.number - 1 : null
       
       logger.info('Balances rolled back to fork point')
     },
