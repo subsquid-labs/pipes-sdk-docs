@@ -187,10 +187,8 @@ function createBalanceTransformer() {
     fork: async (cursor: BlockCursor, { logger }) => {
       assert(db, 'BalanceTransformer::fork: Database not initialized')
       
-      // On fork, rollback balances to the fork point
       logger.info({ forkBlock: cursor.number }, 'Handling fork, rolling back balances')
       
-      // Prepare all statements outside the transaction for better performance
       const getCurrentBalance = db.prepare('SELECT balance FROM balances WHERE address = ?')
       const getAllDeltasAfterFork = db.prepare(`
         SELECT address, delta FROM balance_deltas
@@ -199,25 +197,25 @@ function createBalanceTransformer() {
       const updateBalance = db.prepare('INSERT INTO balances (address, balance) VALUES (?, ?) ON CONFLICT(address) DO UPDATE SET balance = ?')
       const deleteDeltas = db.prepare('DELETE FROM balance_deltas WHERE block_number > ?')
       const deleteProcessedBlocks = db.prepare('DELETE FROM processed_blocks WHERE block_number > ?')
-      
-      // Get all deltas after the fork block (outside transaction for read)
-      const allDeltasAfterFork = getAllDeltasAfterFork.all(cursor.number) as Array<{ address: string; delta: string }>
-      
-      // Group deltas by address and sum them
-      const addressDeltaSums = new Map<string, bigint>()
-      for (const row of allDeltasAfterFork) {
-        const currentSum = addressDeltaSums.get(row.address) || 0n
-        addressDeltaSums.set(row.address, currentSum + BigInt(row.delta))
-      }
-      
+
       // All SQLite operations are wrapped in a single transaction for atomicity
       const transaction = db.transaction(() => {
-        // For each address, rollback by subtracting the sum of all deltas after fork
-        for (const [address, deltaToSubtract] of addressDeltaSums) {
-          const currentRow = getCurrentBalance.get(address) as { balance: string } | undefined
-          const currentBalance = BigInt(currentRow?.balance || '0')
-          const balanceAtFork = currentBalance - deltaToSubtract
-          updateBalance.run(address, balanceAtFork.toString(), balanceAtFork.toString())
+        const allDeltasAfterFork = getAllDeltasAfterFork.all(cursor.number) as Array<{ address: string; delta: string }>
+      
+        const updatedBalances = new Map<string, bigint>()
+        for (const { address, delta } of allDeltasAfterFork) {
+          let currentBalance = updatedBalances.get(address)
+          if (!currentBalance) {
+            const dbBalance = getCurrentBalance.get(address)?.balance
+            assert(dbBalance, `Balance for address ${address} with a recorded update not found in database while rolling back due to a fork`)
+            currentBalance = BigInt(dbBalance)
+          }
+          currentBalance -= BigInt(delta)
+          updatedBalances.set(address, currentBalance)
+        }
+
+        for (const [address, balance] of updatedBalances) {
+          updateBalance.run(address, balance.toString(), balance.toString())
         }
         
         // Delete deltas and processed blocks after the fork point
