@@ -226,37 +226,46 @@ function createBalanceTransformer() {
       // On fork, rollback balances to the fork point
       logger.info({ forkBlock: cursor.number }, 'Handling fork, rolling back balances')
       
-      // Get all addresses that had changes after the fork block
-      const addressesToRollback = db.prepare(`
-        SELECT DISTINCT address FROM balance_deltas WHERE block_number > ?
-      `).all(cursor.number) as Array<{ address: string }>
-      
-      // For each address, rollback by subtracting deltas from blocks after the fork
+      // Prepare all statements outside the transaction for better performance
       const getCurrentBalance = db.prepare('SELECT balance FROM balances WHERE address = ?')
       const getDeltasAfterFork = db.prepare(`
         SELECT delta FROM balance_deltas
         WHERE address = ? AND block_number > ?
       `)
       const updateBalance = db.prepare('INSERT INTO balances (address, balance) VALUES (?, ?) ON CONFLICT(address) DO UPDATE SET balance = ?')
+      const deleteDeltas = db.prepare('DELETE FROM balance_deltas WHERE block_number > ?')
+      const deleteProcessedBlocks = db.prepare('DELETE FROM processed_blocks WHERE block_number > ?')
       
-      for (const { address } of addressesToRollback) {
-        const currentRow = getCurrentBalance.get(address) as { balance: string } | undefined
-        const currentBalance = BigInt(currentRow?.balance || '0')
-        
-        // Sum all deltas after fork (using BigInt to handle large numbers)
-        const deltaRows = getDeltasAfterFork.all(address, cursor.number) as Array<{ delta: string }>
-        let deltaToSubtract = 0n
-        for (const row of deltaRows) {
-          deltaToSubtract += BigInt(row.delta)
+      // Get all addresses that had changes after the fork block (outside transaction for read)
+      const addressesToRollback = db.prepare(`
+        SELECT DISTINCT address FROM balance_deltas WHERE block_number > ?
+      `).all(cursor.number) as Array<{ address: string }>
+      
+      // All SQLite operations are wrapped in a single transaction for atomicity
+      const transaction = db.transaction(() => {
+        // For each address, rollback by subtracting deltas from blocks after the fork
+        for (const { address } of addressesToRollback) {
+          const currentRow = getCurrentBalance.get(address) as { balance: string } | undefined
+          const currentBalance = BigInt(currentRow?.balance || '0')
+          
+          // Sum all deltas after fork (using BigInt to handle large numbers)
+          const deltaRows = getDeltasAfterFork.all(address, cursor.number) as Array<{ delta: string }>
+          let deltaToSubtract = 0n
+          for (const row of deltaRows) {
+            deltaToSubtract += BigInt(row.delta)
+          }
+          
+          const balanceAtFork = currentBalance - deltaToSubtract
+          updateBalance.run(address, balanceAtFork.toString(), balanceAtFork.toString())
         }
         
-        const balanceAtFork = currentBalance - deltaToSubtract
-        updateBalance.run(address, balanceAtFork.toString(), balanceAtFork.toString())
-      }
+        // Delete deltas and processed blocks after the fork point
+        deleteDeltas.run(cursor.number)
+        deleteProcessedBlocks.run(cursor.number)
+      })
       
-      // Delete deltas and processed blocks after the fork point
-      db.prepare('DELETE FROM balance_deltas WHERE block_number > ?').run(cursor.number)
-      db.prepare('DELETE FROM processed_blocks WHERE block_number > ?').run(cursor.number)
+      // Execute the transaction atomically
+      transaction()
       
       logger.info('Balances rolled back to fork point')
     },
