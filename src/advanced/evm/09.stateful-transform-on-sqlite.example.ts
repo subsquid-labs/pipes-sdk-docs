@@ -240,25 +240,12 @@ function createBalanceTransformer() {
 }
 
 async function main() {
+
   const client = createClient({
     username: 'default',
     password: 'default',
     url: 'http://localhost:10123',
   })
-
-  // Create ClickHouse table with CollapsingMergeTree
-  await client.command({ query: `
-    CREATE TABLE IF NOT EXISTS sqd_balances (
-      address          LowCardinality(FixedString(42)),
-      block            UInt32 CODEC (DoubleDelta, ZSTD),
-      transactionIndex UInt32,
-      logIndex         UInt32,
-      newBalance       String,
-      sign             Int8 DEFAULT 1
-    )
-    ENGINE = CollapsingMergeTree(sign)
-    ORDER BY (block, transactionIndex, logIndex, address);
-  `})
 
   await evmPortalSource({
     portal: 'https://portal.sqd.dev/datasets/arbitrum-one',
@@ -276,6 +263,21 @@ async function main() {
     .pipeTo(
       clickhouseTarget({
         client,
+        onStart: async ({ store }) => {
+          store.command({ query: `
+            CREATE TABLE IF NOT EXISTS sqd_balances (
+              address          LowCardinality(FixedString(42)),
+              block            UInt32 CODEC (DoubleDelta, ZSTD),
+              transactionIndex UInt32,
+              logIndex         UInt32,
+              newBalance       String,
+              sign             Int8 DEFAULT 1
+            )
+            ENGINE = CollapsingMergeTree(sign)
+            ORDER BY (block, transactionIndex, logIndex, address);
+            `
+          })
+        },
         onRollback: async ({ type, store, safeCursor }) => {
           try {
             // Query rows that need to be cancelled (blocks after rollback point)
