@@ -223,6 +223,14 @@ async function main() {
           })
         },
         onRollback: async ({ type, store, safeCursor }) => {
+          // onRollback is required despite not handling forks.
+          //
+          // Since ClickHouse is not transactional,
+          // an unclean shutdown may insert some data
+          // that's newer than the block recorder to the sync table.
+          //
+          // To ensure that ClickHouse state is clean
+          // the target calls onRollback on startup.
           const result = await store.removeAllRows({
             tables: ['sqd_balances'],
             where: `block > {latest:UInt32}`,
