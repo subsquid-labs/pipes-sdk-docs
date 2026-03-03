@@ -1,17 +1,44 @@
 import { BlockCursor, createTarget } from '@subsquid/pipes'
-import { evmPortalSource, evmDecoder, commonAbis } from '@subsquid/pipes/evm'
+import { solanaPortalSource, SolanaQueryBuilder } from '@subsquid/pipes/solana'
 
 async function main() {
-  const source = evmPortalSource({
-    portal: 'https://portal.sqd.dev/datasets/ethereum-mainnet'
-  })
+  const query = new SolanaQueryBuilder()
+    .addFields({
+      block: {
+        // block header fields
+        timestamp: true,
+        number: true,
+      },
+      transaction: {
+        // transaction fields
+        signatures: true,
+        accountKeys: true,
+      },
+      instruction: {
+        // instruction fields
+        programId: true,
+        accounts: true,
+        data: true,
+      },
+    })
+    .addInstruction({
+      range: {
+        from: 403780000,
+      },
+      request: {
+        programId: ['LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo'],
+        isCommitted: true,
+        innerInstructions: true,
+        transaction: true,
+        transactionTokenBalances: true,
+        logs: true
+      }
+    })
 
-  const transformer = evmDecoder({
-    contracts: ['0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48'], // USDC
-    events: {
-      transfer: commonAbis.erc20.events.Transfer
-    },
-    range: { from: 'latest' }
+
+  const source = solanaPortalSource({
+    portal: 'https://portal.sqd.dev/datasets/solana-mainnet',
+    query
   })
 
   // To handle forks we'll need to keep track of recently
@@ -19,7 +46,6 @@ async function main() {
   let recentUnfinalizedBlocks: BlockCursor[] = []
 
   await source
-    .pipe(transformer)
     .pipeTo(createTarget({
       // When the source detects a fork it throws a
       // ForkException out of the read() function.
@@ -31,7 +57,7 @@ async function main() {
       //   ...
       write: async ({logger, read}) => {
         for await (const {data, ctx} of read(recentUnfinalizedBlocks[recentUnfinalizedBlocks.length-1])) {
-          console.log(`Got ${data.transfer.length} transfers`)
+          console.log(`Got ${data.blocks.length} blocks, starting with ${data.blocks[0]?.header.number}`)
           // Not all data streams contain information on recent blocks.
           // So instead of looking at the data we're using
           // ctx.state.rollbackChain: it contains cursor values for
@@ -47,7 +73,7 @@ async function main() {
           }
           recentUnfinalizedBlocks = recentUnfinalizedBlocks.slice(recentUnfinalizedBlocks.length - 1000, recentUnfinalizedBlocks.length)
 
-          console.log(`Recent blocks list length is ${recentUnfinalizedBlocks.length} after processing the batch`)
+//          console.log(`Recent blocks list length is ${recentUnfinalizedBlocks.length} after processing the batch`)
         }
       },
       // When the source detects a fork it'll throw a ForkException
