@@ -1,5 +1,6 @@
 import { BlockCursor, createTarget } from '@subsquid/pipes'
 import { solanaPortalSource, SolanaQueryBuilder } from '@subsquid/pipes/solana'
+import fs from 'fs'
 
 async function main() {
   const query = new SolanaQueryBuilder()
@@ -23,7 +24,7 @@ async function main() {
     })
     .addInstruction({
       range: {
-        from: 403780000,
+        from: 409946495,
       },
       request: {
         programId: ['LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo'],
@@ -89,6 +90,10 @@ async function main() {
         console.log(`Got a fork!`)
         console.log(`Here are the saved recent blocks:\n`, printBlockCursorArray(recentUnfinalizedBlocks))
         console.log(`Here are the updated consensus blocks sent by the portal:\n`, printBlockCursorArray(newConsensusBlocks))
+
+        const timestamp = new Date().toISOString();
+        fs.appendFileSync('forks.txt', `[${timestamp}] Got a fork!\n`);
+
         const rollbackIndex = findRollbackIndex(recentUnfinalizedBlocks, newConsensusBlocks)
         if (rollbackIndex >= 0) {
           console.log(`Rolling back: removing blocks after ${printBlockCursor(recentUnfinalizedBlocks[rollbackIndex])}`)
