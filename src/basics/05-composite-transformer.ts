@@ -1,6 +1,6 @@
-import { createTarget, createTransformer } from '@subsquid/pipes'
+import { createTarget } from '@subsquid/pipes'
 import {
-  evmPortalSource,
+  evmPortalStream,
   evmDecoder,
   commonAbis
 } from '@subsquid/pipes/evm'
@@ -10,20 +10,10 @@ const atBlock = 20000099
 const oneBlockRange = { from: atBlock, to: atBlock }
 
 async function main() {
-  const source = evmPortalSource({
+  const stream = evmPortalStream({
+    id: 'composite-transformer',
     portal: 'https://portal.sqd.dev/datasets/ethereum-mainnet',
-  })
-
-  const target = createTarget({
-    write: async ({logger, read}) => {
-      for await (const {data} of read()) {
-        logger.info({data}, 'data')
-      }
-    },
-  })
-
-  await source
-    .pipeComposite({
+    outputs: {
       usdcTransfers: evmDecoder({
         contracts: ['0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48'], // USDC
         events: {
@@ -38,8 +28,18 @@ async function main() {
         },
         range: oneBlockRange
       })
-    })
-    .pipeTo(target)
+    },
+  })
+
+  const target = createTarget({
+    write: async ({logger, read}) => {
+      for await (const {data} of read()) {
+        logger.info({data}, 'data')
+      }
+    },
+  })
+
+  await stream.pipeTo(target)
 }
 
 void main()

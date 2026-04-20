@@ -1,5 +1,5 @@
 import { createTarget } from '@subsquid/pipes'
-import { evmPortalSource, EvmQueryBuilder } from '@subsquid/pipes/evm'
+import { evmPortalStream, EvmQueryBuilder } from '@subsquid/pipes/evm'
 
 // The query builder shapes the query that gets sent to the Portal API.
 // All methods only add to the data request, none shrink it.
@@ -32,9 +32,10 @@ const queryBuilderWithUsdcTransfers = new EvmQueryBuilder()
   })
 
 async function main() {
-  const source = evmPortalSource({
+  const source = evmPortalStream({
+    id: 'trivial-pipe',
     portal: 'https://portal.sqd.dev/datasets/ethereum-mainnet',
-    query: queryBuilderWithUsdcTransfers,
+    outputs: queryBuilderWithUsdcTransfers,
   })
 
   const target = createTarget({

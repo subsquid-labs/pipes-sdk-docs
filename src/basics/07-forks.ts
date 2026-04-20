@@ -1,25 +1,22 @@
 import { BlockCursor, createTarget } from '@subsquid/pipes'
-import { evmPortalSource, evmDecoder, commonAbis } from '@subsquid/pipes/evm'
+import { evmPortalStream, evmDecoder, commonAbis } from '@subsquid/pipes/evm'
 
 async function main() {
-  const source = evmPortalSource({
-    portal: 'https://portal.sqd.dev/datasets/ethereum-mainnet'
-  })
-
-  const transformer = evmDecoder({
-    contracts: ['0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48'], // USDC
-    events: {
-      transfer: commonAbis.erc20.events.Transfer
-    },
-    range: { from: 'latest' }
-  })
-
   // To handle forks we'll need to keep track of recently
   // processed unfinalized blocks. Here we'll use an in-memory queue.
   let recentUnfinalizedBlocks: BlockCursor[] = []
 
-  await source
-    .pipe(transformer)
+  await evmPortalStream({
+    id: 'forks',
+    portal: 'https://portal.sqd.dev/datasets/ethereum-mainnet',
+    outputs: evmDecoder({
+      contracts: ['0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48'], // USDC
+      events: {
+        transfer: commonAbis.erc20.events.Transfer
+      },
+      range: { from: 'latest' }
+    }),
+  })
     .pipeTo(createTarget({
       // When the source detects a fork it throws a
       // ForkException out of the read() function.
@@ -36,14 +33,14 @@ async function main() {
           // So instead of looking at the data we're using
           // ctx.state.rollbackChain: it contains cursor values for
           // all unfinalized blocks of the batch.
-          ctx.state.rollbackChain.forEach((bc) => {
+          ctx.stream.state.rollbackChain.forEach((bc) => {
             recentUnfinalizedBlocks.push(bc)
           })
           // If the source has supplied a cursor of the last known final block
           // we can use it to prune the queue. Also, capping the queue length at 1000
           // (sufficient for all networks we know of).
-          if (ctx.head.finalized) {
-            recentUnfinalizedBlocks = recentUnfinalizedBlocks.filter(b => b.number >= ctx.head.finalized!.number)
+          if (ctx.stream.head.finalized) {
+            recentUnfinalizedBlocks = recentUnfinalizedBlocks.filter(b => b.number >= ctx.stream.head.finalized!.number)
           }
           recentUnfinalizedBlocks = recentUnfinalizedBlocks.slice(recentUnfinalizedBlocks.length - 1000, recentUnfinalizedBlocks.length)
 

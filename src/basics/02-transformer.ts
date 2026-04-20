@@ -1,7 +1,6 @@
-import { createTarget, createTransformer } from '@subsquid/pipes'
+import { createTarget } from '@subsquid/pipes'
 import {
-  evmPortalSource,
-  type EvmPortalData,
+  evmPortalStream,
   EvmQueryBuilder
 } from '@subsquid/pipes/evm'
 
@@ -30,15 +29,10 @@ const queryBuilderWithUsdcTransfers = new EvmQueryBuilder()
   })
 
 async function main() {
-  const source = evmPortalSource({
+  const source = evmPortalStream({
+    id: 'transformer',
     portal: 'https://portal.sqd.dev/datasets/ethereum-mainnet',
-    query: queryBuilderWithUsdcTransfers,
-  })
-
-  const transformer = createTransformer({
-    transform: async (data: EvmPortalData<any>) => {
-      return data.blocks.map(b => b.logs.map(l => l.transactionHash))
-    }
+    outputs: queryBuilderWithUsdcTransfers,
   })
 
   const target = createTarget({
@@ -49,7 +43,10 @@ async function main() {
     },
   })
 
-  await source.pipe(transformer).pipeTo(target)
+  // Custom transforms are chained with .pipe() on the stream
+  await source.pipe({
+    transform: (data) => data.map(b => b.logs.map(l => l.transactionHash))
+  }).pipeTo(target)
 }
 
 void main()

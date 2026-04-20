@@ -1,19 +1,21 @@
-import { createSolanaInstructionDecoder, solanaPortalSource } from '@subsquid/pipes/solana'
+import { solanaInstructionDecoder, solanaPortalStream } from '@subsquid/pipes/solana'
 
 import * as orcaWhirlpool from './abi/orca_whirlpool'
 
 async function cli() {
-  const stream = solanaPortalSource({
+  const stream = solanaPortalStream({
+    id: 'solana-swaps',
     portal: 'https://portal.sqd.dev/datasets/solana-mainnet',
-  }).pipeComposite({
-    orcaWhirlpool: createSolanaInstructionDecoder({
-      range: { from: 'latest' },
-      programId: orcaWhirlpool.programId,
-      instructions: {
-        swaps: orcaWhirlpool.instructions.swap,
-        swapsV2: orcaWhirlpool.instructions.swapV2,
-      },
-    }),
+    outputs: {
+      orcaWhirlpool: solanaInstructionDecoder({
+        range: { from: 'latest' },
+        programId: orcaWhirlpool.programId,
+        instructions: {
+          swaps: orcaWhirlpool.instructions.swap,
+          swapsV2: orcaWhirlpool.instructions.swapV2,
+        },
+      }),
+    },
   })
 
   for await (const { data } of stream) {

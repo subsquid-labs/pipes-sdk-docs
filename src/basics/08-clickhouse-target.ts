@@ -1,5 +1,5 @@
 import { createClient } from '@clickhouse/client'
-import { commonAbis, evmDecoder, evmPortalSource } from '@subsquid/pipes/evm'
+import { commonAbis, evmDecoder, evmPortalStream } from '@subsquid/pipes/evm'
 import { clickhouseTarget } from '@subsquid/pipes/targets/clickhouse'
 
 /**
@@ -31,18 +31,17 @@ async function main() {
     `
   })
 
-  await evmPortalSource({
+  await evmPortalStream({
+    id: 'clickhouse-target',
     portal: 'https://portal.sqd.dev/datasets/ethereum-mainnet',
-  })
-  .pipe(
-    evmDecoder({
+    outputs: evmDecoder({
       range: { from: 'latest' },
       contracts: [ '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48' ], // USDC
       events: {
         transfers: commonAbis.erc20.events.Transfer,
       },
     }),
-  )
+  })
   .pipeTo(
     clickhouseTarget({
       client,

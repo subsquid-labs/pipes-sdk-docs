@@ -1,5 +1,5 @@
 import { formatBlock } from '@subsquid/pipes'
-import { evmPortalSource, evmRpcLatencyWatcher } from '@subsquid/pipes/evm'
+import { evmPortalStream, evmRpcLatencyWatcher } from '@subsquid/pipes/evm'
 
 /**
  * This example demonstrates how to track and compare block indexing latency
@@ -11,7 +11,7 @@ import { evmPortalSource, evmRpcLatencyWatcher } from '@subsquid/pipes/evm'
  * ⚠️ Important:
  * - The measured values INCLUDE client-side network latency.
  * - For RPC, only the *arrival time* of the block is measured — this does NOT
- *   capture the node’s internal processing or response latency if queried directly.
+ *   capture the node's internal processing or response latency if queried directly.
  *****************************************************************************
 
  * In other words, the results represent end-to-end delays as experienced by the client,
@@ -20,14 +20,13 @@ import { evmPortalSource, evmRpcLatencyWatcher } from '@subsquid/pipes/evm'
 
 async function main() {
   // Create a stream of new blocks from the Base mainnet portal
-  const stream = evmPortalSource({
+  const stream = evmPortalStream({
+    id: 'indexing-latency',
     portal: 'https://portal.sqd.dev/datasets/base-mainnet',
-    query: { from: 'latest' }, // Start from the latest block
-  }).pipe(
-    evmRpcLatencyWatcher({
+    outputs: evmRpcLatencyWatcher({
       rpcUrl: ['https://base.drpc.org', 'https://base-rpc.publicnode.com'], // RPC endpoints to monitor
     }).pipe({
-      profiler: { id: 'expose metrics' },
+      profiler: { name: 'expose metrics' },
       transform: (latency, { metrics }) => {
         if (!latency) return // Skip if no latency data
 
@@ -45,7 +44,7 @@ async function main() {
         return latency
       },
     }),
-  )
+  })
 
   // Iterate over the stream, logging block and RPC latency data
   for await (const { data } of stream) {
