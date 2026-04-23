@@ -1,6 +1,6 @@
 import { createClient } from '@clickhouse/client'
-import { createTransformer, type BatchCtx, type BlockCursor } from '@subsquid/pipes'
-import { commonAbis, evmDecoder, evmPortalSource } from '@subsquid/pipes/evm'
+import { createTransformer, type BatchContext, type BlockCursor } from '@subsquid/pipes'
+import { commonAbis, evmDecoder, evmPortalStream } from '@subsquid/pipes/evm'
 import { clickhouseTarget } from '@subsquid/pipes/targets/clickhouse'
 import Database from 'better-sqlite3'
 import { existsSync } from 'fs'
@@ -12,10 +12,10 @@ import assert from 'assert'
  * (0x1337420dED5ADb9980CFc35f8f2B054ea86f8aB1 on Arbitrum),
  * maintains balances in SQLite, and stores the results to ClickHouse
  * (`sqd_balances` table).
- * 
+ *
  * The transformer is self-contained and uses SQLite to track intermediate balances,
- * not relying on ClickHouse for state management. State consistency is ensured with
- * an assert.
+ * not relying on ClickHouse for state management. The `fork` callback handles both
+ * blockchain reorgs and crash recovery (via the `start` callback).
  */
 
 const SQD_TOKEN_ADDRESS = '0x1337420dED5ADb9980CFc35f8f2B054ea86f8aB1'
@@ -56,229 +56,223 @@ type DecodedTransferData = {
 function createBalanceTransformer() {
   let db: Database.Database | null = null
 
+  // Rolls back SQLite state to `blockNumber` (inclusive).
+  // Called from both `start` (crash recovery) and `fork` (blockchain reorg).
+  function rollbackTo(blockNumber: number) {
+    assert(db, 'rollbackTo: database not initialized')
+
+    const getAllDeltas = db.prepare<[number], { address: string; delta: string }>(
+      'SELECT address, delta FROM balance_deltas WHERE block_number > ?'
+    )
+    const getBalance = db.prepare<[string], { balance: string }>(
+      'SELECT balance FROM balances WHERE address = ?'
+    )
+    const updateBalance = db.prepare(
+      'INSERT INTO balances (address, balance) VALUES (?, ?) ON CONFLICT(address) DO UPDATE SET balance = excluded.balance'
+    )
+    const deleteDeltas = db.prepare('DELETE FROM balance_deltas WHERE block_number > ?')
+    const deleteProcessedBlocks = db.prepare('DELETE FROM processed_blocks WHERE block_number > ?')
+
+    db.transaction(() => {
+      const deltas = getAllDeltas.all(blockNumber)
+
+      // Net per-address delta across all blocks being undone.
+      const net = new Map<string, bigint>()
+      for (const { address, delta } of deltas) {
+        net.set(address, (net.get(address) ?? 0n) + BigInt(delta))
+      }
+
+      for (const [address, delta] of net) {
+        const row = getBalance.get(address)
+        assert(row, `Balance for ${address} not found while rolling back`)
+        const restored = BigInt(row.balance) - delta
+        updateBalance.run(address, restored.toString())
+      }
+
+      deleteDeltas.run(blockNumber)
+      deleteProcessedBlocks.run(blockNumber)
+    })()
+  }
+
   return createTransformer<DecodedTransferData, BalanceRow[]>({
     start: async ({ logger, state }) => {
-      // Initialize SQLite database
       if (existsSync(SQLITE_DB_PATH)) {
         logger.info('Existing SQLite database found, will resume from last processed block')
       }
-      
+
       db = new Database(SQLITE_DB_PATH)
-      
-      // Create balances table if it doesn't exist
+
       db.exec(`
         CREATE TABLE IF NOT EXISTS balances (
           address TEXT NOT NULL PRIMARY KEY,
           balance TEXT NOT NULL DEFAULT '0'
         )
       `)
-      
-      // Create processed blocks table to track progress
       db.exec(`
         CREATE TABLE IF NOT EXISTS processed_blocks (
           block_number INTEGER NOT NULL PRIMARY KEY
         )
       `)
-      
-      // Create balance deltas table to track changes per block (for rollback)
+      // Cumulative net delta per (address, block_number), used to reverse state on fork/crash.
       db.exec(`
         CREATE TABLE IF NOT EXISTS balance_deltas (
-          address TEXT NOT NULL,
+          address      TEXT    NOT NULL,
           block_number INTEGER NOT NULL,
-          delta TEXT NOT NULL,
+          delta        TEXT    NOT NULL,
           PRIMARY KEY (address, block_number)
         )
       `)
-      
-      // Get last processed block from SQLite
-      const lastBlock = db.prepare('SELECT MAX(block_number) as max_block FROM processed_blocks').get() as { max_block: number | null }
-      const sqliteLastBlock = lastBlock.max_block ?? null
-      
-      // Assert that the initial state matches what's in SQLite
+
+      const row = db.prepare('SELECT MAX(block_number) as max_block FROM processed_blocks').get() as
+        | { max_block: number | null }
+      const sqliteLastBlock = row.max_block ?? null
       const stateLastBlock = state.current?.number ?? null
-      assert(
-        sqliteLastBlock === stateLastBlock,
-        `State mismatch: SQLite has last processed block ${sqliteLastBlock}, but transformer state indicates ${stateLastBlock}. ` +
-        `This indicates inconsistent state between SQLite and the pipeline state.`
-      )
-      
-      if (sqliteLastBlock !== null) {
-        logger.info({ lastProcessedBlock: sqliteLastBlock }, `BalanceTransformer: Resuming from last processed block ${sqliteLastBlock}`)
+
+      if (sqliteLastBlock !== null && (stateLastBlock === null || sqliteLastBlock > stateLastBlock)) {
+        // SQLite is ahead of the pipeline state. This happens when the process crashed after
+        // the SQLite transaction committed but before the ClickHouse target saved the updated
+        // cursor. Roll back SQLite to match the pipeline state — this is the transformer-level
+        // equivalent of ClickHouse's onRollback({ type: 'offset_check' }).
+        logger.info(
+          { sqliteLastBlock, stateLastBlock },
+          'SQLite ahead of pipeline state (crash recovery) — rolling back'
+        )
+        rollbackTo(stateLastBlock ?? -1)
+      } else if (sqliteLastBlock !== stateLastBlock) {
+        throw new Error(
+          `State mismatch: SQLite max block ${sqliteLastBlock} < pipeline cursor ${stateLastBlock}. ` +
+          'Cannot recover automatically — manual intervention required.'
+        )
+      } else {
+        logger.info({ stateLastBlock }, 'Balance transformer state consistent, resuming')
       }
-      
-      logger.info('Balance transformer initialized')
     },
-    
-    transform: async (data: DecodedTransferData, ctx: BatchCtx): Promise<BalanceRow[]> => {
-      assert(db, 'BalanceTransformer::transform: Database not initialized')
+
+    transform: async (data: DecodedTransferData, ctx: BatchContext): Promise<BalanceRow[]> => {
+      assert(db, 'BalanceTransformer::transform: database not initialized')
 
       const balanceRows: BalanceRow[] = []
       const transfers = data.transfers
 
-      // The block that will become the last processed one from from ctx.state
-      const lastProcessedBlock = ctx.state.current?.number ?? null
-      
-      // If we have data to process but no ctx.state.current, that's an error condition
-      assert(
-        lastProcessedBlock !== null || transfers.length === 0,
-        `State error: Have data to process but ctx.state.current is null. This indicates a pipes SDK bug.`
+      const lastProcessedBlock = ctx.stream.state.current.number
+
+      const getBalance = db.prepare<[string], { balance: string }>(
+        'SELECT balance FROM balances WHERE address = ?'
       )
- 
-      const getBalance = db.prepare('SELECT balance FROM balances WHERE address = ?')
-      const updateBalance = db.prepare('INSERT INTO balances (address, balance) VALUES (?, ?) ON CONFLICT(address) DO UPDATE SET balance = ?')
-      const insertDelta = db.prepare('INSERT OR REPLACE INTO balance_deltas (address, block_number, delta) VALUES (?, ?, ?)')
-      const insertProcessedBlock = db.prepare('INSERT OR IGNORE INTO processed_blocks (block_number) VALUES (?)')
-       
-      // All SQLite operations are wrapped in a single transaction for atomicity
-      const transaction = db.transaction(() => {
+      const updateBalance = db.prepare(
+        'INSERT INTO balances (address, balance) VALUES (?, ?) ON CONFLICT(address) DO UPDATE SET balance = excluded.balance'
+      )
+      // Accumulate the net delta per (address, block_number) in the table so that
+      // rollbackTo() can correctly reverse every block's net effect even when the
+      // same address appears in multiple transfers within the same block.
+      const upsertDelta = db.prepare(`
+        INSERT INTO balance_deltas (address, block_number, delta)
+        VALUES (?, ?, ?)
+        ON CONFLICT(address, block_number)
+        DO UPDATE SET delta = CAST(CAST(delta AS INTEGER) + CAST(excluded.delta AS INTEGER) AS TEXT)
+      `)
+      const insertProcessedBlock = db.prepare(
+        'INSERT OR IGNORE INTO processed_blocks (block_number) VALUES (?)'
+      )
+
+      db.transaction(() => {
         const currentBalances = new Map<string, bigint>()
 
         for (const transfer of transfers) {
           const from = transfer.event.from.toLowerCase()
           const to = transfer.event.to.toLowerCase()
           const value = transfer.event.value
-          assert(transfer.rawEvent.transactionIndex, `Received transfer with no transactionIndex on block ${transfer.block.number}`)
+          assert(
+            transfer.rawEvent.transactionIndex !== undefined,
+            `Received transfer with no transactionIndex on block ${transfer.block.number}`
+          )
           const logLocation: LogLocation = {
             block: transfer.block.number,
             transactionIndex: transfer.rawEvent.transactionIndex,
-            logIndex: transfer.rawEvent.logIndex
+            logIndex: transfer.rawEvent.logIndex,
           }
-          
+
           if (from !== '0x0000000000000000000000000000000000000000') {
-            let currentBalance = currentBalances.get(from) ||
-              BigInt(getBalance.get(from)?.balance || '0')
-            currentBalance -= value
-            currentBalances.set(from, currentBalance)
-            updateBalance.run(from, currentBalance.toString(), currentBalance.toString())
-            insertDelta.run(from, logLocation.block, (-value).toString())
-            balanceRows.push({
-              address: from,
-              ...logLocation,
-              newBalance: currentBalance.toString()
-            })
+            let balance = currentBalances.get(from) ?? BigInt(getBalance.get(from)?.balance ?? '0')
+            balance -= value
+            currentBalances.set(from, balance)
+            updateBalance.run(from, balance.toString())
+            upsertDelta.run(from, logLocation.block, (-value).toString())
+            balanceRows.push({ address: from, ...logLocation, newBalance: balance.toString() })
           }
           if (to !== '0x0000000000000000000000000000000000000000') {
-            let currentBalance = currentBalances.get(to) ||
-              BigInt(getBalance.get(to)?.balance || '0')
-            currentBalance += value
-            currentBalances.set(to, currentBalance)
-            updateBalance.run(to, currentBalance.toString(), currentBalance.toString())
-            insertDelta.run(to, logLocation.block, value.toString())
-            balanceRows.push({
-              address: to,
-              ...logLocation,
-              newBalance: currentBalance.toString()
-            })
+            let balance = currentBalances.get(to) ?? BigInt(getBalance.get(to)?.balance ?? '0')
+            balance += value
+            currentBalances.set(to, balance)
+            updateBalance.run(to, balance.toString())
+            upsertDelta.run(to, logLocation.block, value.toString())
+            balanceRows.push({ address: to, ...logLocation, newBalance: balance.toString() })
           }
         }
-        
-        // Mark the last processed block from the batch
-        if (lastProcessedBlock !== null) {
-          insertProcessedBlock.run(lastProcessedBlock)
-        }
-      })
-      
-      // Execute the transaction atomically
-      transaction()
-      
+
+        insertProcessedBlock.run(lastProcessedBlock)
+      })()
+
       return balanceRows
     },
-    
+
     fork: async (cursor: BlockCursor, { logger }) => {
-      assert(db, 'BalanceTransformer::fork: Database not initialized')
-      
-      logger.info({ forkBlock: cursor.number }, 'Handling fork, rolling back balances')
-      
-      const getCurrentBalance = db.prepare('SELECT balance FROM balances WHERE address = ?')
-      const getAllDeltasAfterFork = db.prepare(`
-        SELECT address, delta FROM balance_deltas
-        WHERE block_number > ?
-      `)
-      const updateBalance = db.prepare('INSERT INTO balances (address, balance) VALUES (?, ?) ON CONFLICT(address) DO UPDATE SET balance = ?')
-      const deleteDeltas = db.prepare('DELETE FROM balance_deltas WHERE block_number > ?')
-      const deleteProcessedBlocks = db.prepare('DELETE FROM processed_blocks WHERE block_number > ?')
-
-      // All SQLite operations are wrapped in a single transaction for atomicity
-      const transaction = db.transaction(() => {
-        const allDeltasAfterFork = getAllDeltasAfterFork.all(cursor.number) as Array<{ address: string; delta: string }>
-
-        const updatedBalances = new Map<string, bigint>()
-        for (const { address, delta } of allDeltasAfterFork) {
-          let currentBalance = updatedBalances.get(address)
-          if (!currentBalance) {
-            const dbBalance = getCurrentBalance.get(address)?.balance
-            assert(dbBalance, `Balance for address ${address} with a recorded update not found in database while rolling back due to a fork`)
-            currentBalance = BigInt(dbBalance)
-          }
-          currentBalance -= BigInt(delta)
-          updatedBalances.set(address, currentBalance)
-        }
-
-        for (const [address, balance] of updatedBalances) {
-          updateBalance.run(address, balance.toString(), balance.toString())
-        }
-        
-        // Delete deltas and processed blocks after the fork point
-        deleteDeltas.run(cursor.number)
-        deleteProcessedBlocks.run(cursor.number)
-      })
-      
-      // Execute the transaction atomically
-      transaction()
-      
-      logger.info('Balances rolled back to fork point')
+      logger.info({ forkBlock: cursor.number }, 'Handling fork, rolling back SQLite balances')
+      rollbackTo(cursor.number)
+      logger.info('SQLite balances rolled back to fork point')
     },
-    
+
     stop: async ({ logger }) => {
       if (db) {
         db.close()
         db = null
         logger.info('Balance transformer stopped, database closed')
       }
-    }
+    },
   })
 }
 
 async function main() {
-
   const client = createClient({
     username: 'default',
     password: 'default',
     url: 'http://localhost:10123',
   })
 
-  await evmPortalSource({
+  await evmPortalStream({
+    id: 'stateful-sqlite-balances',
     portal: 'https://portal.sqd.dev/datasets/arbitrum-one',
+    outputs: evmDecoder({
+      contracts: [SQD_TOKEN_ADDRESS],
+      events: {
+        transfers: commonAbis.erc20.events.Transfer,
+      },
+      range: { from: 194120655 },
+    }),
   })
-    .pipe(
-      evmDecoder({
-        contracts: [SQD_TOKEN_ADDRESS],
-        events: {
-          transfers: commonAbis.erc20.events.Transfer,
-        },
-        range: { from: 194120655 },
-      }),
-    )
     .pipe(createBalanceTransformer())
     .pipeTo(
       clickhouseTarget({
         client,
         onStart: async ({ store }) => {
-          store.command({ query: `
-            CREATE TABLE IF NOT EXISTS sqd_balances (
-              address          LowCardinality(FixedString(42)),
-              block            UInt32 CODEC (DoubleDelta, ZSTD),
-              transactionIndex UInt32,
-              logIndex         UInt32,
-              newBalance       String,
-              sign             Int8 DEFAULT 1
-            )
-            ENGINE = CollapsingMergeTree(sign)
-            ORDER BY (block, transactionIndex, logIndex, address);
-            `
+          store.command({
+            query: `
+              CREATE TABLE IF NOT EXISTS sqd_balances (
+                address          LowCardinality(FixedString(42)),
+                block            UInt32 CODEC (DoubleDelta, ZSTD),
+                transactionIndex UInt32,
+                logIndex         UInt32,
+                newBalance       String,
+                sign             Int8 DEFAULT 1
+              )
+              ENGINE = CollapsingMergeTree(sign)
+              ORDER BY (block, transactionIndex, logIndex, address)
+            `,
           })
         },
-        onRollback: async ({ type, store, safeCursor }) => {
+        onRollback: async ({ store, safeCursor }) => {
+          // Remove ClickHouse rows written after the safe cursor.
+          // SQLite rollback is handled by the transformer's fork/start callbacks.
           const result = await store.removeAllRows({
             tables: ['sqd_balances'],
             where: `block > {latest:UInt32}`,
@@ -286,13 +280,12 @@ async function main() {
           })
           console.log(`Removed ${result[0]?.count ?? 0} rows from sqd_balances`)
         },
-        onData: async ({ store, data, ctx }) => {
+        onData: async ({ store, data }) => {
           if (data.length === 0) return
-          
           console.log(`Inserting ${data.length} balance updates`)
           store.insert({
             table: 'sqd_balances',
-            values: data.map(row => ({
+            values: data.map((row) => ({
               address: row.address,
               block: row.block,
               transactionIndex: row.transactionIndex,
@@ -303,9 +296,8 @@ async function main() {
             format: 'JSONEachRow',
           })
         },
-      }),
+      })
     )
 }
 
 void main()
-
