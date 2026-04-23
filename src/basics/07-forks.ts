@@ -5,6 +5,13 @@ async function main() {
   // To handle forks we'll need to keep track of recently
   // processed unfinalized blocks. Here we'll use an in-memory queue.
   let recentUnfinalizedBlocks: BlockCursor[] = []
+  // Portal instances can be load-balanced: a reconnected stream may land on a
+  // lagging instance whose X-Sqd-Finalized-Head-Number is lower than what
+  // we previously saw. Treat the finalized head as a monotonically increasing
+  // high-water mark so the pruning threshold never moves backwards. The full
+  // cursor (number + hash) is kept so it can serve as a fallback rollback
+  // point when a lagging instance's 409 sample doesn't overlap our history.
+  let finalizedHighWatermark: BlockCursor | undefined
 
   await evmPortalStream({
     id: 'forks',
@@ -18,14 +25,16 @@ async function main() {
     }),
   })
     .pipeTo(createTarget({
-      // When the source detects a fork it throws a
-      // ForkException out of the read() function.
-      // As a result write() is restarted.
-      // For that reason it's critical that the we resume
-      // from the last known block:
-      //   ...
-      //   for await (const {data, ctx} of read(recentUnfinalizedBlocks[recentUnfinalizedBlocks.length-1])) {
-      //   ...
+      // The cursor passed to read() is the startup cursor. For this in-memory
+      // example recentUnfinalizedBlocks is always empty at process start, so
+      // the stream begins from range.from. If the state were persisted across
+      // restarts (e.g. in a database), restoring recentUnfinalizedBlocks and
+      // passing its last entry here would resume from the correct position.
+      //
+      // Fork handling is transparent to write(): when the portal returns a 409
+      // the SDK catches the ForkException inside the read() iterator, calls
+      // fork() to determine the rollback cursor, then resumes the stream from
+      // that cursor — write() keeps iterating batches without interruption.
       write: async ({logger, read}) => {
         for await (const {data, ctx} of read(recentUnfinalizedBlocks[recentUnfinalizedBlocks.length-1])) {
           console.log(`Got ${data.transfer.length} transfers`)
@@ -40,22 +49,25 @@ async function main() {
           // we can use it to prune the queue. Also, capping the queue length at 1000
           // (sufficient for all networks we know of).
           if (ctx.stream.head.finalized) {
-            recentUnfinalizedBlocks = recentUnfinalizedBlocks.filter(b => b.number >= ctx.stream.head.finalized!.number)
+            if (!finalizedHighWatermark || ctx.stream.head.finalized.number > finalizedHighWatermark.number) {
+              finalizedHighWatermark = ctx.stream.head.finalized
+            }
+            recentUnfinalizedBlocks = recentUnfinalizedBlocks.filter(b => b.number >= finalizedHighWatermark!.number)
           }
           recentUnfinalizedBlocks = recentUnfinalizedBlocks.slice(recentUnfinalizedBlocks.length - 1000, recentUnfinalizedBlocks.length)
 
           console.log(`Recent blocks list length is ${recentUnfinalizedBlocks.length} after processing the batch`)
         }
       },
-      // When the source detects a fork it'll throw a ForkException
-      // from the read() function. The target will catch it and run
-      // the fork() function with the blocks sampled from
-      // the new consensus (passed with the exception), then
-      // run the write() function again.
+      // When the portal detects a fork it returns HTTP 409. The SDK translates
+      // this into a ForkException, catches it inside the read() iterator, and
+      // calls fork() with the portal's current-chain block sample. fork() must
+      // find the latest block that both our local history and that sample agree
+      // on (by hash and number) and return it as the rollback cursor. The
+      // iterator then resumes the stream from cursor.number + 1.
       //
-      // This might happen several times: we won't always find
-      // the common ancestor among the new known consensus blocks
-      // immediately.
+      // This may happen more than once if the portal's sample doesn't reach
+      // the common ancestor on the first attempt.
       fork: async (newConsensusBlocks) => {
         console.log(`Got a fork!`)
         console.log(`Here are the saved recent blocks:\n`, printBlockCursorArray(recentUnfinalizedBlocks))
@@ -66,6 +78,22 @@ async function main() {
           recentUnfinalizedBlocks.length = rollbackIndex + 1
           console.log(`Updated recent blocks:\n`, printBlockCursorArray(recentUnfinalizedBlocks))
           return recentUnfinalizedBlocks[rollbackIndex]
+        }
+        else if (
+          finalizedHighWatermark &&
+          newConsensusBlocks.every(b => b.number < finalizedHighWatermark!.number)
+        ) {
+          // All of previousBlocks are below the finalized high-water mark.
+          // This happens when the load balancer switches to a lagging portal
+          // instance whose fork sample doesn't reach up to our history. Since
+          // the high-water mark is truly final, all correct instances agree on
+          // it: the fork must be somewhere above it. Roll back to the high-water
+          // mark so the stream can recover from there.
+          console.log(`All previousBlocks below high-water mark; rolling back to ${printBlockCursor(finalizedHighWatermark)}`)
+          // Discard any blocks above the high-water mark — they may be on
+          // the old fork chain and must be re-fetched from the new chain.
+          recentUnfinalizedBlocks = recentUnfinalizedBlocks.filter(b => b.number <= finalizedHighWatermark!.number)
+          return finalizedHighWatermark
         }
         else {
           // We can't recover if the fork is deeper than
