@@ -14,6 +14,7 @@ At [src/basics](src/basics) folder of this repo you'll find a sequence of exampl
  * profiling (throughout the examples)
  * [indexing factory contracts](src/advanced/evm/03.factory.example.ts)
  * [customizing the metrics](src/advanced/evm/06.custom-metrics.example.ts)
+ * [stateful transforms: in-RAM rolling window with portal warm-up](src/advanced/evm/13.stateful-transform-in-ram.example.ts)
  * [stateful transforms writing to Postgres — stateless approach](src/advanced/evm/11.stateful-transforms-postgres-stateless.example.ts)
  * [stateful transforms writing to Postgres — in-memory approach](src/advanced/evm/12.stateful-transforms-postgres-in-memory.example.ts)
 
