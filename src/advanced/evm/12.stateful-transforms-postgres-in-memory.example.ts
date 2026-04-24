@@ -51,9 +51,6 @@ const transferCountsTable = pgTable('transfer_counts', {
 /**
  * Collects database writes from multiple transformers. Each transformer pushes
  * closures; onData flushes them all inside the drizzleTarget transaction.
- *
- * A new instance is created per batch (inside the first transformer's transform())
- * and flows through the rest of the chain via the Piped wrapper.
  */
 class WriteQueue {
   private readonly ops: Array<(tx: Transaction) => Promise<void>> = []
@@ -79,12 +76,22 @@ type Transfer = {
 
 type DecodedBatch = { transfers: Transfer[] }
 
-/**
- * Wrapper that flows through the transformer chain after the first transformer
- * creates the WriteQueue. Subsequent transformers receive Piped<T> as input,
- * push their writes, and return Piped<T> unchanged.
- */
+/** Wraps any payload together with a WriteQueue for the transformer chain. */
 type Piped<T> = { payload: T; writes: WriteQueue }
+
+// ── Queue initializer ─────────────────────────────────────────────────────────
+
+/**
+ * Creates a fresh WriteQueue for each batch and wraps the payload in Piped<T>.
+ * Place this as the first pipe() in any chain that uses WriteQueue so that all
+ * downstream transformers receive a uniform Piped<T> input without needing to
+ * know whether they are first or last in the chain.
+ */
+function initQueue<T>() {
+  return createTransformer<T, Piped<T>>({
+    transform: (data) => ({ payload: data, writes: new WriteQueue() }),
+  })
+}
 
 // ── Transformer 1: running ERC-20 balances ────────────────────────────────────
 
@@ -93,14 +100,12 @@ type Piped<T> = { payload: T; writes: WriteQueue }
  * transform() call updates the map in place and enqueues a deduplicated UPSERT
  * (one row per address touched in the batch). fork() reloads the map after
  * drizzleTarget has already restored the pre-fork Postgres state.
- *
- * This transformer is always first: it creates the WriteQueue for the batch.
  */
 function createBalanceTransformer(db: ReturnType<typeof drizzle>) {
   const zero = '0x0000000000000000000000000000000000000000'
   let balances = new Map<string, bigint>()
 
-  return createTransformer<DecodedBatch, Piped<DecodedBatch>>({
+  return createTransformer<Piped<DecodedBatch>, Piped<DecodedBatch>>({
     start: async ({ logger }) => {
       logger.info('Loading balances from Postgres…')
       const rows = await db.select().from(tokenBalancesTable)
@@ -108,17 +113,15 @@ function createBalanceTransformer(db: ReturnType<typeof drizzle>) {
       logger.info(`Loaded ${balances.size} balances`)
     },
 
-    transform: async (data, _ctx) => {
-      const writes = new WriteQueue()  // fresh queue for this batch
-
-      if (data.transfers.length === 0) {
-        return { payload: data, writes }
+    transform: async ({ payload, writes }, _ctx) => {
+      if (payload.transfers.length === 0) {
+        return { payload, writes }
       }
 
       // Track which addresses were modified so we can write only the delta.
       const modified = new Set<string>()
 
-      for (const t of data.transfers) {
+      for (const t of payload.transfers) {
         const from  = t.event.from.toLowerCase()
         const to    = t.event.to.toLowerCase()
         const value = t.event.value
@@ -147,7 +150,7 @@ function createBalanceTransformer(db: ReturnType<typeof drizzle>) {
         }
       })
 
-      return { payload: data, writes }
+      return { payload, writes }
     },
 
     // drizzleTarget commits the snapshot rollback BEFORE this callback fires,
@@ -236,8 +239,9 @@ async function main() {
       range: { from: 194_120_655 },
     }),
   })
-    .pipe(createBalanceTransformer(db))       // loads balances map, creates WriteQueue
-    .pipe(createTransferCountTransformer(db)) // loads counts map, adds to same queue
+    .pipe(initQueue<DecodedBatch>())            // wraps each batch in Piped<T> with a fresh queue
+    .pipe(createBalanceTransformer(db))         // loads balances map, adds balance writes
+    .pipe(createTransferCountTransformer(db))   // loads counts map, adds count writes
     .pipeTo(
       drizzleTarget({
         db,

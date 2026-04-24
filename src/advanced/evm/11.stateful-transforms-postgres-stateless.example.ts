@@ -53,9 +53,6 @@ const transferCountsTable = pgTable('transfer_counts', {
 /**
  * Collects database writes from multiple transformers. Each transformer pushes
  * closures; onData flushes them all inside the drizzleTarget transaction.
- *
- * A new instance is created per batch (inside the first transformer's transform())
- * and flows through the rest of the chain via the Piped wrapper.
  */
 class WriteQueue {
   private readonly ops: Array<(tx: Transaction) => Promise<void>> = []
@@ -81,36 +78,42 @@ type Transfer = {
 
 type DecodedBatch = { transfers: Transfer[] }
 
-/**
- * Wrapper that flows through the transformer chain after the first transformer
- * creates the WriteQueue. Subsequent transformers receive Piped<T> as input,
- * push their writes, and return Piped<T> unchanged.
- */
+/** Wraps any payload together with a WriteQueue for the transformer chain. */
 type Piped<T> = { payload: T; writes: WriteQueue }
+
+// ── Queue initializer ─────────────────────────────────────────────────────────
+
+/**
+ * Creates a fresh WriteQueue for each batch and wraps the payload in Piped<T>.
+ * Place this as the first pipe() in any chain that uses WriteQueue so that all
+ * downstream transformers receive a uniform Piped<T> input without needing to
+ * know whether they are first or last in the chain.
+ */
+function initQueue<T>() {
+  return createTransformer<T, Piped<T>>({
+    transform: (data) => ({ payload: data, writes: new WriteQueue() }),
+  })
+}
 
 // ── Transformer 1: running ERC-20 balances ────────────────────────────────────
 
 /**
  * Reads the current balance for each touched address from Postgres, applies the
  * batch's transfers in order, and enqueues an UPSERT for each modified address.
- *
- * This transformer is always first: it creates the WriteQueue for the batch.
  */
 function createBalanceTransformer(db: ReturnType<typeof drizzle>) {
-  return createTransformer<DecodedBatch, Piped<DecodedBatch>>({
-    transform: async (data, _ctx) => {
-      const writes = new WriteQueue()  // fresh queue for this batch
-
-      if (data.transfers.length === 0) {
-        return { payload: data, writes }
+  return createTransformer<Piped<DecodedBatch>, Piped<DecodedBatch>>({
+    transform: async ({ payload, writes }, _ctx) => {
+      if (payload.transfers.length === 0) {
+        return { payload, writes }
       }
 
       // Collect every address touched in this batch
+      const zero = '0x0000000000000000000000000000000000000000'
       const addresses = new Set<string>()
-      for (const t of data.transfers) {
+      for (const t of payload.transfers) {
         const from = t.event.from.toLowerCase()
         const to   = t.event.to.toLowerCase()
-        const zero = '0x0000000000000000000000000000000000000000'
         if (from !== zero) addresses.add(from)
         if (to   !== zero) addresses.add(to)
       }
@@ -125,8 +128,7 @@ function createBalanceTransformer(db: ReturnType<typeof drizzle>) {
       const current = new Map(existing.map(r => [r.address, BigInt(r.balance ?? '0')]))
 
       // Apply transfers in chronological order
-      const zero = '0x0000000000000000000000000000000000000000'
-      for (const t of data.transfers) {
+      for (const t of payload.transfers) {
         const from  = t.event.from.toLowerCase()
         const to    = t.event.to.toLowerCase()
         const value = t.event.value
@@ -148,7 +150,7 @@ function createBalanceTransformer(db: ReturnType<typeof drizzle>) {
         }
       })
 
-      return { payload: data, writes }
+      return { payload, writes }
     },
     // No fork() callback needed: tokenBalancesTable is in drizzleTarget's `tables`,
     // so the snapshot mechanism rolls it back automatically on a reorg.
@@ -159,8 +161,7 @@ function createBalanceTransformer(db: ReturnType<typeof drizzle>) {
 
 /**
  * Reads the current send count for each sender from Postgres, increments it for
- * each outbound transfer in the batch, and enqueues an UPSERT. Receives the
- * WriteQueue created by the upstream balance transformer and adds to it.
+ * each outbound transfer in the batch, and enqueues an UPSERT.
  */
 function createTransferCountTransformer(db: ReturnType<typeof drizzle>) {
   return createTransformer<Piped<DecodedBatch>, Piped<DecodedBatch>>({
@@ -190,7 +191,6 @@ function createTransferCountTransformer(db: ReturnType<typeof drizzle>) {
 
       const rows = [...current.entries()].map(([address, count]) => ({ address, count }))
 
-      // Push into the same queue — will be flushed together with balance writes
       writes.push(async (tx) => {
         for (const batch of batchForInsert(rows)) {
           await tx.insert(transferCountsTable).values(batch).onConflictDoUpdate({
@@ -224,8 +224,9 @@ async function main() {
       range: { from: 194_120_655 },
     }),
   })
-    .pipe(createBalanceTransformer(db))       // creates WriteQueue, adds balance writes
-    .pipe(createTransferCountTransformer(db)) // adds count writes to the same queue
+    .pipe(initQueue<DecodedBatch>())            // wraps each batch in Piped<T> with a fresh queue
+    .pipe(createBalanceTransformer(db))         // adds balance writes to the queue
+    .pipe(createTransferCountTransformer(db))   // adds count writes to the same queue
     .pipeTo(
       drizzleTarget({
         db,
