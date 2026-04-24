@@ -1,4 +1,5 @@
 import { commonAbis, evmDecoder, evmPortalStream } from '@subsquid/pipes/evm'
+import { metricsServer } from '@subsquid/pipes/metrics/node'
 
 /**
  * This example demonstrates how to add custom Prometheus metrics to your data processing pipeline.
@@ -18,6 +19,8 @@ async function cli() {
         transfers: commonAbis.erc20.events.Transfer,
       },
     }),
+    metrics: metricsServer(), // listens on 9090 by default,
+                              // pass {port: <port_num>} to override
   })
 
   /*
