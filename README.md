@@ -1,6 +1,6 @@
 # Pipes SDK examples directory
 
-Pipes SDK is a highly customizable blockchain indexing library made by [Subsquid](https://www.sqd.ai). This repo is a collection of various examples of its usage.
+Pipes SDK is a highly customizable blockchain indexing library made by [SQD](https://sqd.dev). This repo is a collection of various examples of its usage.
 
 ## Basics
 
